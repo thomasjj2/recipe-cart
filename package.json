@@ -1,0 +1,8 @@
+{
+  "name": "recipe-cart",
+  "version": "0.1.0",
+  "private": true,
+  "dependencies": {
+    "firebase-admin": "^12.1.0"
+  }
+}
