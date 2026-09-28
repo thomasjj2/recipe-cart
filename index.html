@@ -58,7 +58,22 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/fireba
 import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
 // TODO: paste your Firebase web config (Project settings > Your apps)
-const firebaseConfig = { apiKey:"", authDomain:"", projectId:"", appId:"" };
+const firebaseConfig = {
+
+  apiKey: "AIzaSyDRjr8mZpwsjBW1wTbGFJbiB5sS9acc4-s",
+
+  authDomain: "recipe-cart-a1164.firebaseapp.com",
+
+  projectId: "recipe-cart-a1164",
+
+  storageBucket: "recipe-cart-a1164.firebasestorage.app",
+
+  messagingSenderId: "479408777820",
+
+  appId: "1:479408777820:web:7ff84f540ee5cc604f9499"
+
+};
+
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 let user = null, matched = null;
