@@ -41,6 +41,16 @@ label{display:block;font-weight:600;font-size:.9rem;margin:10px 0 4px}
 .banner.err{background:#fbe9e4;color:var(--bad)}
 .total{display:flex;justify-content:space-between;font-weight:700;padding:12px 0 4px;font-size:1.1rem}
 small.note{color:var(--mute)}
+.prefrow{display:flex;gap:6px;align-items:center;margin-bottom:6px}
+.prefrow input{flex:1;padding:10px;border:1.5px solid var(--line);border-radius:8px;font:inherit}
+.prefrow .rank{width:22px;text-align:center;font-weight:700;color:var(--mute);flex-shrink:0}
+.iconbtn{min-height:38px;min-width:38px;border:1.5px solid var(--line);background:#fff;border-radius:7px;cursor:pointer;font-size:1rem;flex-shrink:0}
+.storeopt{border:1.5px solid var(--line);border-radius:8px;padding:10px;margin-top:6px;cursor:pointer}
+.storeopt.selected{border-color:var(--accent);background:#fdf1e7}
+.badge{display:inline-block;font-size:.75rem;font-weight:700;padding:2px 7px;border-radius:5px;margin-left:6px}
+.badge.low{background:#fbe9e4;color:var(--bad)}
+.badge.moderate{background:#fdf3d9;color:#8a6416}
+.fallbacknote{background:#fdf3d9;color:#8a6416;padding:8px 10px;border-radius:8px;font-size:.85rem;margin:6px 0}
 details.saved summary{cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:baseline;gap:10px;min-height:44px}
 details.saved summary::-webkit-details-marker{display:none}
 details.saved summary::after{content:"Open";color:var(--accent);font-size:.85rem;font-weight:600;flex-shrink:0}
@@ -66,6 +76,7 @@ footer a{color:var(--mute)}
 <div class="tabs" role="tablist" aria-label="Sections">
   <button role="tab" id="tabBuild" aria-selected="true" aria-controls="paneBuild">Build a list</button>
   <button role="tab" id="tabLists" aria-selected="false" aria-controls="paneLists">Your lists</button>
+  <button role="tab" id="tabProtein" aria-selected="false" aria-controls="paneProtein">Protein plan</button>
 </div>
 
 <section id="paneBuild" role="tabpanel" aria-labelledby="tabBuild">
@@ -86,6 +97,24 @@ footer a{color:var(--mute)}
     <p class="note" style="margin:6px 0 0"><small class="note">Delete your account to remove your saved lists, your Kroger connection, and your sign in. This cannot be undone.</small></p>
     <button class="btn danger block" id="deleteAccount">Delete my account and data</button>
   </div>
+</section>
+
+<section id="paneProtein" role="tabpanel" aria-labelledby="tabProtein" hidden>
+  <div class="card">
+    <label for="storeZip">Find your Kroger store</label>
+    <div style="display:flex;gap:8px">
+      <input id="storeZip" type="text" inputmode="numeric" autocomplete="postal-code" placeholder="ZIP code" style="flex:1">
+      <button class="btn ghost" id="findStores" style="flex-shrink:0">Find stores</button>
+    </div>
+    <div id="storePicker"></div>
+    <label for="proteinTarget" style="margin-top:14px">Weekly protein target (grams)</label>
+    <input id="proteinTarget" type="text" inputmode="numeric" placeholder="700">
+    <label style="margin-top:14px">Your preferred protein sources, best first</label>
+    <div id="prefRows"></div>
+    <button class="btn ghost" id="addPref" style="margin-top:6px">+ Add another</button>
+    <button class="btn primary block" id="goProtein" style="margin-top:14px">Build my plan</button>
+  </div>
+  <div id="proteinResults"></div>
 </section>
 </main>
 
@@ -124,6 +153,72 @@ const store = {
 // ZIP code is remembered on this device only.
 $("zip").value = store.get("zip") || "";
 $("zip").addEventListener("input", () => store.set("zip", $("zip").value.trim()));
+$("proteinTarget").value = store.get("proteinTarget") || "";
+$("proteinTarget").addEventListener("input", () => store.set("proteinTarget", $("proteinTarget").value.trim()));
+
+// Preferences are stored as a JSON array so they can be reordered.
+let prefs = [];
+try { prefs = JSON.parse(store.get("proteinPrefsList") || "[]"); } catch { prefs = []; }
+if (!prefs.length) prefs = [""];
+let selectedStore = null;
+try { selectedStore = JSON.parse(store.get("selectedStore") || "null"); } catch { selectedStore = null; }
+$("storeZip").value = store.get("zip") || "";
+
+function renderPrefRows() {
+  $("prefRows").innerHTML = prefs.map((val, i) => `
+    <div class="prefrow">
+      <span class="rank">${i + 1}</span>
+      <input type="text" value="${esc(val)}" data-i="${i}" placeholder="e.g. rotisserie chicken">
+      <button class="iconbtn" data-up="${i}" ${i === 0 ? "disabled" : ""} aria-label="Move up">↑</button>
+      <button class="iconbtn" data-down="${i}" ${i === prefs.length - 1 ? "disabled" : ""} aria-label="Move down">↓</button>
+      <button class="iconbtn" data-remove="${i}" aria-label="Remove">×</button>
+    </div>`).join("");
+  savePrefs();
+}
+function savePrefs() { store.set("proteinPrefsList", JSON.stringify(prefs)); }
+renderPrefRows();
+
+$("prefRows").addEventListener("input", (ev) => {
+  const i = ev.target.dataset.i;
+  if (i != null) { prefs[i] = ev.target.value; savePrefs(); }
+});
+$("prefRows").addEventListener("click", (ev) => {
+  const up = ev.target.dataset.up, down = ev.target.dataset.down, rm = ev.target.dataset.remove;
+  if (up != null) { const i = Number(up); [prefs[i - 1], prefs[i]] = [prefs[i], prefs[i - 1]]; renderPrefRows(); }
+  if (down != null) { const i = Number(down); [prefs[i + 1], prefs[i]] = [prefs[i], prefs[i + 1]]; renderPrefRows(); }
+  if (rm != null) { prefs.splice(Number(rm), 1); if (!prefs.length) prefs = [""]; renderPrefRows(); }
+});
+$("addPref").onclick = () => { prefs.push(""); renderPrefRows(); };
+
+// ---- Store selection ----
+function renderStorePicker(stores) {
+  if (!stores?.length) { $("storePicker").innerHTML = `<p class="note" style="margin:8px 0 0">No stores found near that ZIP.</p>`; return; }
+  $("storePicker").innerHTML = stores.map((s) => `
+    <div class="storeopt ${selectedStore?.locationId === s.locationId ? "selected" : ""}" data-loc="${esc(s.locationId)}">
+      <b>${esc(s.name)}</b><br><small class="note">${esc(s.address)}</small>
+    </div>`).join("");
+  $("storePicker").querySelectorAll("[data-loc]").forEach((el, idx) => {
+    el.onclick = () => {
+      selectedStore = stores[idx];
+      store.set("selectedStore", JSON.stringify(selectedStore));
+      renderStorePicker(stores);
+    };
+  });
+}
+if (selectedStore) renderStorePicker([selectedStore]);
+
+$("findStores").onclick = async () => {
+  const zip = $("storeZip").value.trim();
+  if (!zip) return banner("err", "Enter a ZIP code first.");
+  store.set("zip", zip);
+  $("findStores").disabled = true;
+  $("storePicker").innerHTML = "<p class=\"note\">Looking for stores…</p>";
+  try {
+    const r = await postJSON("/.netlify/functions/kroger-stores", { zip });
+    renderStorePicker(r.stores);
+  } catch (e) { banner("err", e.message || "Could not find stores."); $("storePicker").innerHTML = ""; }
+  $("findStores").disabled = false;
+};
 
 const signIn = () => signInWithPopup(auth, new GoogleAuthProvider()).catch((e) => banner("err", e.message || "Could not sign in."));
 
@@ -147,15 +242,17 @@ function banner(kind, msg) { $("banner").innerHTML = `<div class="banner ${kind}
 // ---- Tabs ----
 function setTab(name) {
   tab = name;
-  const isBuild = name === "build";
-  $("paneBuild").hidden = !isBuild;
-  $("paneLists").hidden = isBuild;
-  $("tabBuild").setAttribute("aria-selected", String(isBuild));
-  $("tabLists").setAttribute("aria-selected", String(!isBuild));
-  if (!isBuild) loadLists();
+  $("paneBuild").hidden = name !== "build";
+  $("paneLists").hidden = name !== "lists";
+  $("paneProtein").hidden = name !== "protein";
+  $("tabBuild").setAttribute("aria-selected", String(name === "build"));
+  $("tabLists").setAttribute("aria-selected", String(name === "lists"));
+  $("tabProtein").setAttribute("aria-selected", String(name === "protein"));
+  if (name === "lists") loadLists();
 }
 $("tabBuild").onclick = () => setTab("build");
 $("tabLists").onclick = () => setTab("lists");
+$("tabProtein").onclick = () => setTab("protein");
 
 // ---- Build a list ----
 $("go").onclick = async () => {
@@ -207,6 +304,84 @@ async function sendToCart() {
       location.href = `/.netlify/functions/kroger-auth-start?idToken=${encodeURIComponent(idToken)}`;
     } else banner("err", e.message || "Could not add to cart.");
   }
+}
+
+// ---- Protein plan ----
+$("goProtein").onclick = async () => {
+  const target = Number($("proteinTarget").value.trim());
+  const preferences = prefs.map((p) => p.trim()).filter(Boolean);
+  const zip = $("storeZip").value.trim();
+  if (!target || target <= 0) return banner("err", "Enter a weekly protein target in grams.");
+  if (!preferences.length) return banner("err", "Add at least one protein source.");
+  if (!selectedStore && !zip) return banner("err", "Pick your store, or enter a ZIP code.");
+  $("banner").innerHTML = "";
+  $("goProtein").disabled = true;
+  $("proteinResults").innerHTML = "<p>Checking your store and building your plan…</p>";
+  try {
+    const r = await postJSON("/.netlify/functions/protein-plan", {
+      targetProteinPerWeek: target, preferences, zip,
+      locationId: selectedStore?.locationId || null,
+    });
+    renderProteinPlan(r);
+  } catch (e) {
+    banner("err", e.message || "Something went wrong.");
+    $("proteinResults").innerHTML = "";
+  }
+  $("goProtein").disabled = false;
+};
+
+function renderProteinPlan(r) {
+  const rows = r.plan.map((p) => {
+    const prod = p.product;
+    const fallbackNote = p.wasFallback
+      ? `<div class="fallbacknote">Your #${p.rank} pick wasn't available at your store, or an earlier pick already covered part of your goal — we substituted <b>${esc(prod.description)}</b>.</div>`
+      : "";
+    const confBadge = p.confidence === "low" ? `<span class="badge low">Rough estimate</span>`
+      : p.confidence === "moderate" ? `<span class="badge moderate">Estimate</span>` : "";
+    const qtyLine = p.packages
+      ? `${p.packages} package${p.packages === 1 ? "" : "s"} · ≈${p.proteinFromThis}g protein${confBadge}`
+      : (p.note || "Couldn't estimate a quantity for this item.");
+    return `${fallbackNote}
+      <div class="item">
+        ${prod.image ? `<img src="${esc(prod.image)}" alt="">` : `<div class="thumb"></div>`}
+        <div class="info"><b>${esc(prod.description)}</b><small>${esc(prod.size || "")}</small>
+          <small class="note">${qtyLine}${p.assumptionNote ? " — " + esc(p.assumptionNote) : ""}</small></div>
+        <div class="price">${prod.promoPrice != null ? money(prod.promoPrice) : prod.price != null ? money(prod.price) : "n/a"}</div>
+      </div>`;
+  }).join("");
+
+  const skippedNote = r.unmatched.length
+    ? `<small class="note">Not carried at your store, so skipped: ${r.unmatched.map((u) => esc(u.name)).join(", ")}.</small>`
+    : "";
+  const shortfallNote = r.shortfall > 0
+    ? `<div class="fallbacknote">This plan is ${r.shortfall}g short of your ${r.targetProteinPerWeek}g goal. Add another protein source to close the gap.</div>`
+    : "";
+
+  $("proteinResults").innerHTML = `
+    <div class="card">
+      <b>Your weekly plan</b>
+      <div class="total"><span>Estimated protein</span><span>${r.totalProteinEstimate}g of ${r.targetProteinPerWeek}g</span></div>
+      <div class="total" style="font-size:1rem;font-weight:400"><span>Estimated cost</span><span>${money(r.totalCost)}</span></div>
+      ${shortfallNote}
+      ${rows}
+      ${skippedNote}
+      <small class="note" style="display:block;margin-top:8px">Kroger's catalog shows what's carried at your store, not live shelf stock — confirm it's actually available when you get there. Quantities are estimates based on typical nutrition values, not the specific product's label.</small>
+      <button class="btn block" id="addFullPlan" style="margin-top:12px">Add full plan to my Kroger cart</button>
+    </div>`;
+
+  $("addFullPlan").onclick = async () => {
+    if (!user) return banner("err", "Sign in first.");
+    const idToken = await user.getIdToken();
+    const items = r.plan.filter((p) => p.packages && p.product?.upc).map((p) => ({ upc: p.product.upc, quantity: p.packages }));
+    if (!items.length) return banner("err", "Nothing to add yet.");
+    try {
+      const res = await postJSON("/.netlify/functions/cart-add", { idToken, items });
+      banner("ok", `Added ${res.added} items to your Kroger cart.`);
+    } catch (e) {
+      if (e.message === "not_connected") location.href = `/.netlify/functions/kroger-auth-start?idToken=${encodeURIComponent(idToken)}`;
+      else banner("err", e.message || "Could not add to cart.");
+    }
+  };
 }
 
 // Saves ONLY the title and ingredient names and quantities. No Kroger products or prices.
