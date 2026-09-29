@@ -69,17 +69,16 @@ footer a{color:var(--mute)}
 <div id="signin"><span id="who">Not signed in</span><button id="signbtn">Sign in</button></div>
 <main>
 <h1>Recipe → Cart</h1>
-<p class="sub">Paste a recipe or meal plan. Get real Kroger prices and send it straight to your cart.</p>
+<p class="sub">Hit your weekly protein goal at the lowest price, then send it straight to your Kroger cart.</p>
 
 <div id="banner" role="status"></div>
 
 <div class="tabs" role="tablist" aria-label="Sections">
-  <button role="tab" id="tabBuild" aria-selected="true" aria-controls="paneBuild">Build a list</button>
-  <button role="tab" id="tabLists" aria-selected="false" aria-controls="paneLists">Your lists</button>
-  <button role="tab" id="tabProtein" aria-selected="false" aria-controls="paneProtein">Protein plan</button>
+  <button role="tab" id="tabProtein" aria-selected="true" aria-controls="paneProtein">Plan</button>
+  <button role="tab" id="tabBuild" aria-selected="false" aria-controls="paneBuild">Recipes</button>
 </div>
 
-<section id="paneBuild" role="tabpanel" aria-labelledby="tabBuild">
+<section id="paneBuild" role="tabpanel" aria-labelledby="tabBuild" hidden>
   <div class="card">
     <label for="recipe">Recipe or meal plan text</label>
     <textarea id="recipe" placeholder="Paste a recipe here, e.g. ingredients for chicken stir fry..."></textarea>
@@ -88,18 +87,11 @@ footer a{color:var(--mute)}
     <button class="btn primary block" id="go">Build shopping list</button>
   </div>
   <div id="list"></div>
-</section>
-
-<section id="paneLists" role="tabpanel" aria-labelledby="tabLists" hidden>
+  <h2 style="font-size:1.1rem;margin:20px 0 8px">Saved lists</h2>
   <div id="lists"></div>
-  <div class="card" id="danger" hidden>
-    <b>Your data</b>
-    <p class="note" style="margin:6px 0 0"><small class="note">Delete your account to remove your saved lists, your weekly plan history, your Kroger connection, and your sign in. This cannot be undone.</small></p>
-    <button class="btn danger block" id="deleteAccount">Delete my account and data</button>
-  </div>
 </section>
 
-<section id="paneProtein" role="tabpanel" aria-labelledby="tabProtein" hidden>
+<section id="paneProtein" role="tabpanel" aria-labelledby="tabProtein">
   <div id="planHome"></div>
   <div class="card">
     <label for="storeZip">Find your Kroger store</label>
@@ -117,6 +109,12 @@ footer a{color:var(--mute)}
   </div>
   <div id="proteinResults"></div>
 </section>
+
+<div class="card" id="danger" hidden style="margin-top:18px">
+  <b>Your data</b>
+  <p class="note" style="margin:6px 0 0"><small class="note">Delete your account to remove your saved lists, your weekly plan history, your Kroger connection, and your sign in. This cannot be undone.</small></p>
+  <button class="btn danger block" id="deleteAccount">Delete my account and data</button>
+</div>
 </main>
 
 <footer>
@@ -142,7 +140,7 @@ const firebaseConfig = {   apiKey: "AIzaSyDRjr8mZpwsjBW1wTbGFJbiB5sS9acc4-s",
   appId: "1:479408777820:web:7ff84f540ee5cc604f9499" };
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
-let user = null, matched = null, parsed = null, savedLists = [], tab = "build";
+let user = null, matched = null, parsed = null, savedLists = [], tab = "protein";
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const money = (n) => (n == null ? null : "$" + Number(n).toFixed(2));
@@ -227,7 +225,8 @@ onAuthStateChanged(auth, (u) => {
   user = u;
   $("who").textContent = u ? `Signed in as ${u.email || u.displayName || "you"}` : "Not signed in";
   $("signbtn").textContent = u ? "Sign out" : "Sign in";
-  if (tab === "lists") loadLists();
+  $("danger").hidden = !u;
+  if (tab === "build") loadLists();
   if (tab === "protein") loadPlanHome();
 });
 $("signbtn").onclick = () => (user ? signOut(auth) : signIn());
@@ -245,16 +244,13 @@ function banner(kind, msg) { $("banner").innerHTML = `<div class="banner ${kind}
 function setTab(name) {
   tab = name;
   $("paneBuild").hidden = name !== "build";
-  $("paneLists").hidden = name !== "lists";
   $("paneProtein").hidden = name !== "protein";
   $("tabBuild").setAttribute("aria-selected", String(name === "build"));
-  $("tabLists").setAttribute("aria-selected", String(name === "lists"));
   $("tabProtein").setAttribute("aria-selected", String(name === "protein"));
-  if (name === "lists") loadLists();
+  if (name === "build") loadLists();
   if (name === "protein") loadPlanHome();
 }
 $("tabBuild").onclick = () => setTab("build");
-$("tabLists").onclick = () => setTab("lists");
 $("tabProtein").onclick = () => setTab("protein");
 
 // ---- Build a list ----
@@ -322,6 +318,7 @@ $("goProtein").onclick = async () => {
   $("banner").innerHTML = "";
   $("goProtein").disabled = true;
   $("proteinResults").innerHTML = "<p>Checking your store and building your plan…</p>";
+  lastRequest = { target, preferences };
   try {
     const r = await postJSON("/.netlify/functions/protein-plan", {
       targetProteinPerWeek: target, preferences, zip,
@@ -336,38 +333,57 @@ $("goProtein").onclick = async () => {
 };
 
 function renderProteinPlan(r, repriceFrom) {
-  const rows = r.plan.map((p) => {
+  const v = r[planMode];
+  const c = r.comparison;
+  const rows = v.plan.map((p) => {
     const prod = p.product;
     const fallbackNote = p.wasFallback
-      ? `<div class="fallbacknote">Your #${p.rank} pick wasn't available at your store, or an earlier pick already covered part of your goal — we substituted <b>${esc(prod.description)}</b>.</div>`
+      ? `<div class="fallbacknote">Your #${p.rank} pick wasn't available at your store, or an earlier pick already covered part of your goal, so we substituted <b>${esc(prod.description)}</b>.</div>`
       : "";
     const confBadge = p.confidence === "low" ? `<span class="badge low">Rough estimate</span>`
       : p.confidence === "moderate" ? `<span class="badge moderate">Estimate</span>` : "";
+    const valueBit = p.costPer100gProtein != null ? ` · ${money(p.costPer100gProtein)} per 100g protein` : "";
     const qtyLine = p.packages
-      ? `${p.packages} package${p.packages === 1 ? "" : "s"} · ≈${p.proteinFromThis}g protein${confBadge}`
+      ? `${p.packages} package${p.packages === 1 ? "" : "s"} · ≈${p.proteinFromThis}g protein${valueBit}${confBadge}`
       : (p.note || "Couldn't estimate a quantity for this item.");
     return `${fallbackNote}
       <div class="item">
         ${prod.image ? `<img src="${esc(prod.image)}" alt="">` : `<div class="thumb"></div>`}
         <div class="info"><b>${esc(prod.description)}</b><small>${esc(prod.size || "")}</small>
-          <small class="note">${qtyLine}${p.assumptionNote ? " — " + esc(p.assumptionNote) : ""}</small></div>
+          <small class="note">${qtyLine}${p.assumptionNote ? ", " + esc(p.assumptionNote) : ""}</small></div>
         <div class="price">${prod.promoPrice != null ? money(prod.promoPrice) : prod.price != null ? money(prod.price) : "n/a"}</div>
       </div>`;
   }).join("");
 
-  const skippedNote = r.unmatched.length
-    ? `<small class="note">Not carried at your store, so skipped: ${r.unmatched.map((u) => esc(u.name)).join(", ")}.</small>`
+  const notCarried = v.unmatched.filter((u) => u.reason === "not_carried");
+  const noEstimate = v.unmatched.filter((u) => u.reason === "no_estimate");
+  const skippedNote =
+    (notCarried.length ? `<small class="note" style="display:block">Not carried at your store, so skipped: ${notCarried.map((u) => esc(u.name)).join(", ")}.</small>` : "") +
+    (noEstimate.length ? `<small class="note" style="display:block">No protein estimate for these foods yet, so they were left out: ${noEstimate.map((u) => esc(u.name)).join(", ")}.</small>` : "");
+  const shortfallNote = v.shortfall > 0
+    ? `<div class="fallbacknote">This plan is ${v.shortfall}g short of your ${r.targetProteinPerWeek}g goal. Add another protein source to close the gap.</div>`
     : "";
-  const shortfallNote = r.shortfall > 0
-    ? `<div class="fallbacknote">This plan is ${r.shortfall}g short of your ${r.targetProteinPerWeek}g goal. Add another protein source to close the gap.</div>`
-    : "";
+
+  let compareNote = "";
+  if (c.same) compareNote = "Both modes pick the same products this week.";
+  else if (!c.comparable) compareNote = "Cheapest mode covers less protein than your ranking, so the totals can't be compared directly.";
+  else if (c.savings > 0.005) compareNote = planMode === "cheapest"
+    ? `${money(c.savings)} cheaper than following your ranking (${money(r.ranked.totalCost)}).`
+    : `Cheapest mode would save you ${money(c.savings)} this week.`;
+  else if (c.savings < -0.005) compareNote = `Following your ranking costs ${money(-c.savings)} less this week.`;
 
   $("proteinResults").innerHTML = `
     <div class="card">
       <b>Your weekly plan</b>
       ${repriceFrom ? `<small class="note" style="display:block;margin-top:4px">Same foods and target as your ${esc(fmtDate(repriceFrom))} plan, repriced with today's Kroger prices.</small>` : ""}
-      <div class="total"><span>Estimated protein</span><span>${r.totalProteinEstimate}g of ${r.targetProteinPerWeek}g</span></div>
-      <div class="total" style="font-size:1rem;font-weight:400"><span>Estimated cost</span><span>${money(r.totalCost)}</span></div>
+      <div style="display:flex;gap:6px;margin:10px 0 4px">
+        <button class="btn ${planMode === "cheapest" ? "" : "ghost"}" data-mode="cheapest" aria-pressed="${planMode === "cheapest"}" style="flex:1">Cheapest</button>
+        <button class="btn ${planMode === "ranked" ? "" : "ghost"}" data-mode="ranked" aria-pressed="${planMode === "ranked"}" style="flex:1">Your ranking</button>
+      </div>
+      <small class="note" style="display:block">${planMode === "cheapest" ? "Lowest price per gram of protein, using only the foods you listed." : "Your foods in the order you ranked them."}</small>
+      <div class="total"><span>Estimated protein</span><span>${v.totalProteinEstimate}g of ${r.targetProteinPerWeek}g</span></div>
+      <div class="total" style="font-size:1rem;font-weight:400"><span>Estimated cost</span><span>${money(v.totalCost)}</span></div>
+      ${compareNote ? `<small class="note" style="display:block;color:var(--good);font-weight:600;margin-top:4px">${esc(compareNote)}</small>` : ""}
       ${shortfallNote}
       ${rows}
       ${skippedNote}
@@ -375,18 +391,25 @@ function renderProteinPlan(r, repriceFrom) {
       <button class="btn block" id="addFullPlan" style="margin-top:12px">Add full plan to my Kroger cart</button>
     </div>`;
 
+  $("proteinResults").querySelectorAll("[data-mode]").forEach((btn) => {
+    btn.onclick = () => {
+      planMode = btn.dataset.mode;
+      store.set("planMode", planMode);
+      renderProteinPlan(r, repriceFrom);
+    };
+  });
+
   $("addFullPlan").onclick = async () => {
     if (!user) return banner("err", "Sign in first.");
     const idToken = await user.getIdToken();
-    const items = r.plan.filter((p) => p.packages && p.product?.upc).map((p) => ({ upc: p.product.upc, quantity: p.packages }));
+    const items = v.plan.filter((p) => p.packages && p.product?.upc).map((p) => ({ upc: p.product.upc, quantity: p.packages }));
     if (!items.length) return banner("err", "Nothing to add yet.");
     try {
       const res = await postJSON("/.netlify/functions/cart-add", { idToken, items });
       let streakNote = "";
       try {
         // Saves only the target and food names the user typed. No Kroger products or prices.
-        const foods = [...r.plan, ...r.unmatched].sort((a, b) => a.rank - b.rank).map((x) => x.name);
-        const s = await plansApi("record", { target: r.targetProteinPerWeek, preferences: foods });
+        const s = await plansApi("record", { target: lastRequest?.target ?? r.targetProteinPerWeek, preferences: lastRequest?.preferences || [] });
         renderPlanHome(s);
         if (s.streak > 0) streakNote = ` ${s.streak} week streak.`;
       } catch {}
@@ -399,7 +422,8 @@ function renderProteinPlan(r, repriceFrom) {
 }
 
 // ---- Weekly routine: streak and rebuy ----
-let pendingReprice = null;
+let pendingReprice = null, lastRequest = null;
+let planMode = store.get("planMode") === "ranked" ? "ranked" : "cheapest";
 const fmtDate = (ms) => new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 
 async function loadPlanHome() {
@@ -452,24 +476,22 @@ async function saveList() {
   btn.disabled = true;
   try {
     await api("save", { title: parsed.title, ingredients: parsed.ingredients });
-    btn.textContent = "Saved to Your lists";
-    banner("ok", "Saved. You can find it under Your lists.");
+    btn.textContent = "Saved to Saved lists";
+    banner("ok", "Saved. You can find it under Saved lists on the Recipes tab.");
   } catch (e) {
     btn.disabled = false;
     banner("err", e.message || "Could not save this list.");
   }
 }
 
-// ---- Your lists ----
+// ---- Saved lists ----
 async function loadLists() {
   const box = $("lists");
   if (!user) {
-    $("danger").hidden = true;
     box.innerHTML = `<div class="card empty"><p>Sign in to see your saved lists.</p><button class="btn primary" id="listsSignIn">Sign in with Google</button></div>`;
     $("listsSignIn").onclick = signIn;
     return;
   }
-  $("danger").hidden = false;
   box.innerHTML = "<p>Loading your lists…</p>";
   try {
     const r = await api("list");
