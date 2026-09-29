@@ -23,7 +23,7 @@ const PROTEIN_SOURCES = [
     proteinPer100g: 19, confidence: "high" },
   { keywords: ["ground beef 80", "80/20", "ground beef"], label: "Ground beef 80/20 (raw)", unit: "weight",
     proteinPer100g: 17, confidence: "high" },
-  { keywords: ["steak", "sirloin", "flank steak"], label: "Beef steak (raw)", unit: "weight",
+  { keywords: ["steak", "sirloin", "flank steak", "shaved beef", "beef"], label: "Beef steak (raw)", unit: "weight",
     proteinPer100g: 21, confidence: "moderate", note: "Varies by cut." },
   { keywords: ["pork tenderloin", "pork loin"], label: "Pork tenderloin (raw)", unit: "weight",
     proteinPer100g: 20, confidence: "high" },
