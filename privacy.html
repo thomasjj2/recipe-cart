@@ -22,7 +22,7 @@ a{color:var(--accent)}
 <main>
 <a class="back" href="/">Back to Recipe Cart</a>
 <h1>Privacy policy</h1>
-<p class="meta">Effective September 28, 2026</p>
+<p class="meta">Effective September 29, 2026</p>
 
 <p>Recipe Cart turns a recipe or meal plan into a shopping list, shows current Kroger prices, and can send the items to your Kroger cart. This page explains what we collect, why, and the choices you have. Questions? Email <a href="mailto:therecipecart@outlook.com">therecipecart@outlook.com</a>.</p>
 
@@ -30,8 +30,9 @@ a{color:var(--accent)}
 <ul>
   <li><b>Your Google account details.</b> When you sign in with Google, we receive your name, email address, and a unique account ID. Sign in is handled by Google Firebase.</li>
   <li><b>Saved lists.</b> If you choose Add to Recipe Cart List, we save the list title, the ingredient names, the quantities, and the date. We do not save the recipe text you pasted, and we do not save any Kroger product or price information.</li>
+  <li><b>Weekly protein plan history.</b> When you send a protein plan to your Kroger cart, we save your weekly protein target, the food names you typed in ranked order, and the date. We use this to show your weekly streak and to let you rebuy a plan. We do not save any Kroger product, price, or image information, and we do not save the store you picked.</li>
   <li><b>Your Kroger connection.</b> If you connect your Kroger account, we store a token that lets us add items to your Kroger cart on your behalf. We do not see or store your Kroger password.</li>
-  <li><b>Your ZIP code.</b> It is kept on your own device so you do not have to retype it. We do not save it on our servers.</li>
+  <li><b>Your ZIP code and preferences on your device.</b> Your ZIP code, your selected Kroger store, your protein target, and your list of preferred protein sources are kept on your own device so you do not have to retype them. We do not save them on our servers, other than the protein target and food names in your plan history described above.</li>
 </ul>
 
 <h2>How we use it</h2>
@@ -39,21 +40,23 @@ a{color:var(--accent)}
   <li>To sign you in and keep your saved lists tied to your account.</li>
   <li>To turn the recipe text you paste into an ingredient list. The text is sent to Anthropic, the company behind the Claude AI model, to do this. We do not keep your pasted text.</li>
   <li>To look up stores and current prices near your ZIP code. The ZIP code and each ingredient name are sent to Kroger. Prices are looked up live each time and are not stored by us.</li>
-  <li>To add items to your Kroger cart when you press Send to my Kroger cart.</li>
+  <li>To build a protein plan. Your ZIP code or selected store and each food name you enter are sent to Kroger to find matching products and current prices. Your weekly protein target is used on our server to work out quantities.</li>
+  <li>To add items to your Kroger cart when you press Send to my Kroger cart or Add full plan to my Kroger cart.</li>
+  <li>To show your weekly streak and let you rebuy your last plan. Rebuying looks up fresh prices each time.</li>
 </ul>
 <p>We do not sell your information. We do not use it for advertising.</p>
 
 <h2>Who else handles your information</h2>
-<p>We use these services to run Recipe Cart, and they process information on our behalf: Google Firebase (sign in and saved lists), Netlify (hosting and the server functions behind the app, which may record technical details such as IP addresses and request logs), Anthropic (turning recipe text into ingredients), and Kroger (store, price, and cart features). Each has its own privacy policy. Recipe Cart is an independent app and is not affiliated with or endorsed by Kroger.</p>
+<p>We use these services to run Recipe Cart, and they process information on our behalf: Google Firebase (sign in, saved lists, and plan history), Netlify (hosting and the server functions behind the app, which may record technical details such as IP addresses and request logs), Anthropic (turning recipe text into ingredients), and Kroger (store, price, and cart features). Each has its own privacy policy. Recipe Cart is an independent app and is not affiliated with or endorsed by Kroger.</p>
 
 <h2>How long we keep it</h2>
-<p>We keep your saved lists and Kroger connection until you delete them or delete your account.</p>
+<p>We keep your saved lists, weekly plan history, and Kroger connection until you delete them or delete your account.</p>
 
 <h2>Your choices</h2>
 <ul>
   <li><b>Delete a list.</b> Open Your lists, open the list, and choose Delete.</li>
   <li><b>Export a list.</b> Open Your lists, open the list, and choose Copy or Download.</li>
-  <li><b>Delete everything.</b> In Your lists, choose Delete my account and data. This removes your saved lists, your Kroger connection, and your sign in account. If you would rather we do it, email us.</li>
+  <li><b>Delete everything.</b> In Your lists, choose Delete my account and data. This removes your saved lists, your weekly plan history, your Kroger connection, and your sign in account. If you would rather we do it, email us.</li>
   <li><b>Disconnect Kroger.</b> You can remove Recipe Cart's access from the connected apps or account settings in your Kroger account.</li>
 </ul>
 
