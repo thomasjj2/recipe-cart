@@ -94,12 +94,13 @@ footer a{color:var(--mute)}
   <div id="lists"></div>
   <div class="card" id="danger" hidden>
     <b>Your data</b>
-    <p class="note" style="margin:6px 0 0"><small class="note">Delete your account to remove your saved lists, your Kroger connection, and your sign in. This cannot be undone.</small></p>
+    <p class="note" style="margin:6px 0 0"><small class="note">Delete your account to remove your saved lists, your weekly plan history, your Kroger connection, and your sign in. This cannot be undone.</small></p>
     <button class="btn danger block" id="deleteAccount">Delete my account and data</button>
   </div>
 </section>
 
 <section id="paneProtein" role="tabpanel" aria-labelledby="tabProtein" hidden>
+  <div id="planHome"></div>
   <div class="card">
     <label for="storeZip">Find your Kroger store</label>
     <div style="display:flex;gap:8px">
@@ -227,6 +228,7 @@ onAuthStateChanged(auth, (u) => {
   $("who").textContent = u ? `Signed in as ${u.email || u.displayName || "you"}` : "Not signed in";
   $("signbtn").textContent = u ? "Sign out" : "Sign in";
   if (tab === "lists") loadLists();
+  if (tab === "protein") loadPlanHome();
 });
 $("signbtn").onclick = () => (user ? signOut(auth) : signIn());
 
@@ -249,6 +251,7 @@ function setTab(name) {
   $("tabLists").setAttribute("aria-selected", String(name === "lists"));
   $("tabProtein").setAttribute("aria-selected", String(name === "protein"));
   if (name === "lists") loadLists();
+  if (name === "protein") loadPlanHome();
 }
 $("tabBuild").onclick = () => setTab("build");
 $("tabLists").onclick = () => setTab("lists");
@@ -308,6 +311,8 @@ async function sendToCart() {
 
 // ---- Protein plan ----
 $("goProtein").onclick = async () => {
+  const repriceFrom = pendingReprice;
+  pendingReprice = null;
   const target = Number($("proteinTarget").value.trim());
   const preferences = prefs.map((p) => p.trim()).filter(Boolean);
   const zip = $("storeZip").value.trim();
@@ -322,7 +327,7 @@ $("goProtein").onclick = async () => {
       targetProteinPerWeek: target, preferences, zip,
       locationId: selectedStore?.locationId || null,
     });
-    renderProteinPlan(r);
+    renderProteinPlan(r, repriceFrom);
   } catch (e) {
     banner("err", e.message || "Something went wrong.");
     $("proteinResults").innerHTML = "";
@@ -330,7 +335,7 @@ $("goProtein").onclick = async () => {
   $("goProtein").disabled = false;
 };
 
-function renderProteinPlan(r) {
+function renderProteinPlan(r, repriceFrom) {
   const rows = r.plan.map((p) => {
     const prod = p.product;
     const fallbackNote = p.wasFallback
@@ -360,6 +365,7 @@ function renderProteinPlan(r) {
   $("proteinResults").innerHTML = `
     <div class="card">
       <b>Your weekly plan</b>
+      ${repriceFrom ? `<small class="note" style="display:block;margin-top:4px">Same foods and target as your ${esc(fmtDate(repriceFrom))} plan, repriced with today's Kroger prices.</small>` : ""}
       <div class="total"><span>Estimated protein</span><span>${r.totalProteinEstimate}g of ${r.targetProteinPerWeek}g</span></div>
       <div class="total" style="font-size:1rem;font-weight:400"><span>Estimated cost</span><span>${money(r.totalCost)}</span></div>
       ${shortfallNote}
@@ -376,11 +382,66 @@ function renderProteinPlan(r) {
     if (!items.length) return banner("err", "Nothing to add yet.");
     try {
       const res = await postJSON("/.netlify/functions/cart-add", { idToken, items });
-      banner("ok", `Added ${res.added} items to your Kroger cart.`);
+      let streakNote = "";
+      try {
+        // Saves only the target and food names the user typed. No Kroger products or prices.
+        const foods = [...r.plan, ...r.unmatched].sort((a, b) => a.rank - b.rank).map((x) => x.name);
+        const s = await plansApi("record", { target: r.targetProteinPerWeek, preferences: foods });
+        renderPlanHome(s);
+        if (s.streak > 0) streakNote = ` ${s.streak} week streak.`;
+      } catch {}
+      banner("ok", `Added ${res.added} items to your Kroger cart.${streakNote}`);
     } catch (e) {
       if (e.message === "not_connected") location.href = `/.netlify/functions/kroger-auth-start?idToken=${encodeURIComponent(idToken)}`;
       else banner("err", e.message || "Could not add to cart.");
     }
+  };
+}
+
+// ---- Weekly routine: streak and rebuy ----
+let pendingReprice = null;
+const fmtDate = (ms) => new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+
+async function loadPlanHome() {
+  if (!user) { renderPlanHome(null); return; }
+  try { renderPlanHome(await plansApi("summary")); }
+  catch { $("planHome").innerHTML = ""; }
+}
+
+function renderPlanHome(s) {
+  const box = $("planHome");
+  if (!user || !s) { box.innerHTML = ""; return; }
+  if (!s.last) {
+    box.innerHTML = `<div class="card"><b>Your weekly routine</b>
+      <p class="note" style="margin:6px 0 0">Send a plan to your Kroger cart to start your weekly streak. Next week you can rebuy it in one tap.</p></div>`;
+    return;
+  }
+  const dots = s.dots.map((d) =>
+    `<span title="Week of ${esc(d.weekKey)}" style="display:inline-block;width:14px;height:14px;border-radius:50%;margin-right:6px;background:${d.sent ? "var(--good)" : "var(--line)"}"></span>`).join("");
+  const headline = s.streak > 0 ? `${s.streak} week streak` : "No active streak";
+  const status = s.sentThisWeek ? "This week's plan is in your cart."
+    : s.streak > 0 ? "Send this week's plan to keep your streak going."
+    : "Send this week's plan to start a new streak.";
+  box.innerHTML = `<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
+      <b style="font-size:1.25rem">${esc(headline)}</b>
+      <small class="note">${s.totalWeeks} week${s.totalWeeks === 1 ? "" : "s"} planned</small>
+    </div>
+    <div style="margin:8px 0 6px">${dots}</div>
+    <small class="note" style="display:block">${esc(status)}</small>
+    <div class="total" style="font-size:1rem;font-weight:400;margin-top:10px"><span>Last plan, ${esc(fmtDate(s.last.sentAt))}</span><span>${esc(s.last.target)}g protein</span></div>
+    <small class="note" style="display:block">${s.last.preferences.map(esc).join(", ")}</small>
+    <button class="btn primary block" id="rebuyLast">Rebuy my last plan</button>
+    <small class="note" style="display:block;margin-top:6px">Rebuy uses the same target and foods with today's Kroger prices at your selected store. We don't save past prices.</small>
+  </div>`;
+  $("rebuyLast").onclick = () => {
+    $("proteinTarget").value = String(s.last.target);
+    store.set("proteinTarget", String(s.last.target));
+    prefs = s.last.preferences.slice();
+    renderPrefRows();
+    pendingReprice = s.last.sentAt;
+    $("goProtein").click();
+    $("proteinResults").scrollIntoView({ behavior: "smooth", block: "start" });
   };
 }
 
@@ -499,6 +560,10 @@ $("deleteAccount").onclick = async () => {
 async function api(action, extra = {}) {
   const idToken = await user.getIdToken();
   return postJSON("/.netlify/functions/lists", { idToken, action, ...extra });
+}
+async function plansApi(action, extra = {}) {
+  const idToken = await user.getIdToken();
+  return postJSON("/.netlify/functions/plans", { idToken, action, tzOffset: new Date().getTimezoneOffset(), ...extra });
 }
 async function postJSON(url, body) {
   const r = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
