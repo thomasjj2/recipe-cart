@@ -1,15 +1,16 @@
 // POST { idToken, action, ... } -> the signed-in user's saved ingredient lists.
 // Actions:
-//   "list"                            -> { lists: [{ id, title, ingredients, createdAt }] }
-//   "save"   { title, ingredients }   -> { id }
+//   "list"                            -> { lists: [{ id, title, ingredients, steps?, createdAt }] }
+//   "save"   { title, ingredients, steps? } -> { id }   (steps = the saved meal's short recipe, optional)
 //   "delete" { id }                   -> { deleted: true }
 //   "deleteAccount"                   -> deletes all lists, the Kroger connection, and the sign-in account
-// We store ONLY the user's own list title, ingredient names, and quantities.
+// We store ONLY the user's own list title, ingredient names, quantities, and (for saved meals) the recipe steps.
 // No Kroger product, price, or image data is ever saved here (Kroger ToS Section 5e).
 const { getAdmin } = require("./_firebaseAdmin");
 
 const MAX_LISTS = 50;
 const MAX_ITEMS = 40;
+const MAX_STEPS = 6;
 const clean = (v, n) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
 
 exports.handler = async (event) => {
@@ -39,6 +40,8 @@ exports.handler = async (event) => {
         .slice(0, MAX_ITEMS);
       if (!ingredients.length) return res(400, { error: "There are no ingredients to save." });
 
+      const steps = (Array.isArray(b.steps) ? b.steps : []).map((t) => clean(t, 300)).filter(Boolean).slice(0, MAX_STEPS);
+
       const count = (await col.count().get()).data().count;
       if (count >= MAX_LISTS) {
         return res(409, { error: `You have ${MAX_LISTS} saved lists. Delete one to save another.` });
@@ -46,6 +49,7 @@ exports.handler = async (event) => {
       const ref = await col.add({
         title: clean(b.title, 100) || "Shopping list",
         ingredients,
+        ...(steps.length ? { steps } : {}),
         createdAt: Date.now(),
       });
       return res(200, { id: ref.id });
