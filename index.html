@@ -69,25 +69,27 @@ footer a{color:var(--mute)}
 <div id="signin"><span id="who">Not signed in</span><button id="signbtn">Sign in</button></div>
 <main>
 <h1>Recipe → Cart</h1>
-<p class="sub">Hit your weekly protein goal at the lowest price, then send it straight to your Kroger cart.</p>
+<p class="sub">Hit your weekly protein goal for less, send it to your Kroger cart, and get a week of meals from it.</p>
 
 <div id="banner" role="status"></div>
 
 <div class="tabs" role="tablist" aria-label="Sections">
   <button role="tab" id="tabProtein" aria-selected="true" aria-controls="paneProtein">Plan</button>
-  <button role="tab" id="tabBuild" aria-selected="false" aria-controls="paneBuild">Recipes</button>
+  <button role="tab" id="tabBuild" aria-selected="false" aria-controls="paneBuild">Meals</button>
 </div>
 
 <section id="paneBuild" role="tabpanel" aria-labelledby="tabBuild" hidden>
-  <div class="card">
+  <div id="mealsSettings"></div>
+  <div id="mealsWeek"></div>
+  <div id="recipeBuilder" hidden><div class="card">
     <label for="recipe">Recipe or meal plan text</label>
     <textarea id="recipe" placeholder="Paste a recipe here, e.g. ingredients for chicken stir fry..."></textarea>
     <label for="zip">ZIP code (for local pricing &amp; store)</label>
     <input id="zip" type="text" inputmode="numeric" autocomplete="postal-code" placeholder="31088">
     <button class="btn primary block" id="go">Build shopping list</button>
-  </div>
+  </div></div>
   <div id="list"></div>
-  <h2 style="font-size:1.1rem;margin:20px 0 8px">Saved lists</h2>
+  <h2 style="font-size:1.1rem;margin:24px 0 8px">Saved meals</h2>
   <div id="lists"></div>
 </section>
 
@@ -247,7 +249,7 @@ function setTab(name) {
   $("paneProtein").hidden = name !== "protein";
   $("tabBuild").setAttribute("aria-selected", String(name === "build"));
   $("tabProtein").setAttribute("aria-selected", String(name === "protein"));
-  if (name === "build") loadLists();
+  if (name === "build") { loadLists(); renderMeals(); }
   if (name === "protein") loadPlanHome();
 }
 $("tabBuild").onclick = () => setTab("build");
@@ -335,6 +337,8 @@ $("goProtein").onclick = async () => {
 function renderProteinPlan(r, repriceFrom) {
   const v = r[planMode];
   const c = r.comparison;
+  // Only food names and protein amounts are used for meal ideas. No Kroger product or price data.
+  planFoods = v.plan.filter((p) => p.packages && p.proteinFromThis).map((p) => ({ name: p.name, weeklyProtein: p.proteinFromThis }));
   const rows = v.plan.map((p) => {
     const prod = p.product;
     const fallbackNote = p.wasFallback
@@ -389,6 +393,8 @@ function renderProteinPlan(r, repriceFrom) {
       ${skippedNote}
       <small class="note" style="display:block;margin-top:8px">Kroger's catalog shows what's carried at your store, not live shelf stock — confirm it's actually available when you get there. Quantities are estimates based on typical nutrition values, not the specific product's label.</small>
       <button class="btn block" id="addFullPlan" style="margin-top:12px">Add full plan to my Kroger cart</button>
+      ${planFoods.length ? `<button class="btn primary block" id="getMeals">Get a week of meal ideas from this plan</button>
+      <small class="note" style="display:block;margin-top:6px">Meals use the exact foods above, so you don't eat the same thing every day.</small>` : ""}
     </div>`;
 
   $("proteinResults").querySelectorAll("[data-mode]").forEach((btn) => {
@@ -398,6 +404,12 @@ function renderProteinPlan(r, repriceFrom) {
       renderProteinPlan(r, repriceFrom);
     };
   });
+
+  if ($("getMeals")) $("getMeals").onclick = () => {
+    if (!user) return banner("err", "Sign in with the button at the top to get meal ideas.");
+    setTab("build");
+    startMeals();
+  };
 
   $("addFullPlan").onclick = async () => {
     if (!user) return banner("err", "Sign in first.");
@@ -429,15 +441,23 @@ const fmtDate = (ms) => new Date(ms).toLocaleDateString(undefined, { month: "sho
 async function loadPlanHome() {
   if (!user) { renderPlanHome(null); return; }
   try { renderPlanHome(await plansApi("summary")); }
-  catch { $("planHome").innerHTML = ""; }
+  catch { renderPlanHome(null); }
+}
+
+function howItWorks(extra) {
+  return `<div class="card"><b>How it works</b>
+    <ol class="ings" style="margin:8px 0 0">
+      <li>Set a weekly protein goal and rank the foods you like.</li>
+      <li>See the cheapest way to buy it at your Kroger and send it to your cart.</li>
+      <li>Get a week of meal ideas made from those exact foods, so you never eat the same thing every day.</li>
+    </ol>${extra || ""}</div>`;
 }
 
 function renderPlanHome(s) {
   const box = $("planHome");
-  if (!user || !s) { box.innerHTML = ""; return; }
+  if (!user || !s) { box.innerHTML = howItWorks(); return; }
   if (!s.last) {
-    box.innerHTML = `<div class="card"><b>Your weekly routine</b>
-      <p class="note" style="margin:6px 0 0">Send a plan to your Kroger cart to start your weekly streak. Next week you can rebuy it in one tap.</p></div>`;
+    box.innerHTML = howItWorks(`<small class="note" style="display:block;margin-top:8px">Send a plan to your Kroger cart to start a weekly streak. Next week you can rebuy it in one tap.</small>`);
     return;
   }
   const dots = s.dots.map((d) =>
@@ -476,28 +496,28 @@ async function saveList() {
   btn.disabled = true;
   try {
     await api("save", { title: parsed.title, ingredients: parsed.ingredients });
-    btn.textContent = "Saved to Saved lists";
-    banner("ok", "Saved. You can find it under Saved lists on the Recipes tab.");
+    btn.textContent = "Saved";
+    banner("ok", "Saved. You can find it under Saved meals on the Meals tab.");
   } catch (e) {
     btn.disabled = false;
     banner("err", e.message || "Could not save this list.");
   }
 }
 
-// ---- Saved lists ----
+// ---- Saved meals ----
 async function loadLists() {
   const box = $("lists");
   if (!user) {
-    box.innerHTML = `<div class="card empty"><p>Sign in to see your saved lists.</p><button class="btn primary" id="listsSignIn">Sign in with Google</button></div>`;
+    box.innerHTML = `<div class="card empty"><p>Sign in to see your saved meals.</p><button class="btn primary" id="listsSignIn">Sign in with Google</button></div>`;
     $("listsSignIn").onclick = signIn;
     return;
   }
-  box.innerHTML = "<p>Loading your lists…</p>";
+  box.innerHTML = "<p>Loading your saved meals…</p>";
   try {
     const r = await api("list");
     savedLists = r.lists || [];
     if (!savedLists.length) {
-      box.innerHTML = `<div class="card empty"><p>No saved lists yet. Build a list, then choose Add to Recipe Cart List.</p></div>`;
+      box.innerHTML = `<div class="card empty"><p>No saved meals yet. Get meal ideas from your plan, then tap Save on the ones you like.</p></div>`;
       return;
     }
     box.innerHTML = savedLists.map((l) => {
@@ -516,7 +536,7 @@ async function loadLists() {
     }).join("");
   } catch (e) {
     box.innerHTML = "";
-    banner("err", e.message || "Could not load your lists.");
+    banner("err", e.message || "Could not load your saved meals.");
   }
 }
 
@@ -555,11 +575,12 @@ function downloadList(l) {
 // Prices for a saved list are always looked up live, never stored.
 async function priceList(l) {
   setTab("build");
-  const zip = $("zip").value.trim();
-  if (!zip) { banner("err", "Enter your ZIP code, then open your list again."); $("zip").focus(); return; }
+  const zip = $("storeZip").value.trim() || $("zip").value.trim();
+  if (!zip) { setTab("protein"); banner("err", "Add your ZIP code or pick your store on the Plan tab first, then get prices again."); $("storeZip").focus(); return; }
   $("banner").innerHTML = "";
   parsed = { title: l.title, ingredients: l.ingredients };
   $("list").innerHTML = "<p>Looking up prices near you…</p>";
+  $("list").scrollIntoView({ behavior: "smooth", block: "start" });
   try {
     matched = await postJSON("/.netlify/functions/match-products", { ingredients: l.ingredients, zip });
     renderList(l.title, matched.items, { canSave: false });
@@ -577,6 +598,158 @@ $("deleteAccount").onclick = async () => {
     banner("ok", "Your account and data were deleted.");
   } catch (e) { banner("err", e.message || "Could not delete your account. Email therecipecart@outlook.com and we will do it for you."); }
 };
+
+
+// ---- Meal ideas ----
+// Meals are generated from the foods in the plan on screen. Nothing generated is stored unless the user taps Save.
+let planFoods = [];
+let meals = null; // { foods, days: [{ status, meals, dayProtein, error }] }
+const mealSettings = {
+  perDay: Number(store.get("mealsPerDay")) === 2 ? 2 : 3,
+  cook: ["quick", "normal", "cook"].includes(store.get("mealCook")) ? store.get("mealCook") : "normal",
+};
+
+async function mealApi(action, extra = {}) {
+  const idToken = await user.getIdToken();
+  return postJSON("/.netlify/functions/meal-ideas", {
+    idToken, action, foods: meals.foods, mealsPerDay: mealSettings.perDay, cookTime: mealSettings.cook, ...extra,
+  });
+}
+
+function startMeals() {
+  if (!user) return banner("err", "Sign in with the button at the top to get meal ideas.");
+  if (!planFoods.length) return;
+  $("banner").innerHTML = "";
+  meals = { foods: planFoods.slice(), days: Array.from({ length: 7 }, () => ({ status: "loading", meals: [] })) };
+  renderMeals();
+  meals.days.forEach((_, i) => loadDay(i));
+}
+
+async function loadDay(i) {
+  const gen = meals, d = gen.days[i];
+  d.status = "loading"; d.error = null; renderMeals();
+  try {
+    const r = await mealApi("day", { dayIndex: i });
+    if (meals !== gen) return;
+    d.meals = r.meals; d.dayProtein = r.dayProtein; d.status = "ok";
+  } catch (e) {
+    if (meals !== gen) return;
+    d.status = "error"; d.error = e.message || "Could not plan this day.";
+  }
+  renderMeals();
+}
+
+const sumProtein = (d) => d.meals.reduce((t, m) => t + m.protein, 0);
+
+async function toggleRecipe(di, mi) {
+  const gen = meals, m = gen.days[di].meals[mi];
+  if (m.open) { m.open = false; return renderMeals(); }
+  m.open = true;
+  if (!m.detail) {
+    m.loading = true; renderMeals();
+    try {
+      m.detail = await mealApi("detail", { meal: { title: m.title, summary: m.summary, items: m.items.map((it) => ({ food: it.food, amount: it.amount })), extras: m.extras } });
+    } catch (e) { m.open = false; banner("err", e.message || "Could not write that recipe."); }
+    m.loading = false;
+  }
+  if (meals === gen) renderMeals();
+}
+
+async function swapMeal(di, mi) {
+  const gen = meals, d = gen.days[di], m = d.meals[mi];
+  m.swapping = true; renderMeals();
+  try {
+    const avoid = gen.days.flatMap((x) => x.meals.map((y) => y.title));
+    const r = await mealApi("swap", { dayIndex: di, meal: { title: m.title, items: m.items.map((it) => ({ food: it.food, amount: it.amount })) }, avoid });
+    if (meals !== gen) return;
+    d.meals[mi] = r.meals[0]; d.dayProtein = sumProtein(d);
+  } catch (e) { m.swapping = false; banner("err", e.message || "Could not swap that meal."); }
+  if (meals === gen) renderMeals();
+}
+
+async function saveMeal(di, mi) {
+  if (!user) return banner("err", "Sign in to save meals.");
+  const m = meals.days[di].meals[mi];
+  try {
+    // Saves only the meal title, food names and amounts. No Kroger products or prices.
+    await api("save", { title: m.title, ingredients: [...m.items.map((it) => ({ name: it.food, qty: it.qty })), ...m.extras.map((n) => ({ name: n, qty: "" }))] });
+    m.saved = true; renderMeals(); loadLists();
+    banner("ok", "Saved. Find it under Saved meals below.");
+  } catch (e) { banner("err", e.message || "Could not save this meal."); }
+}
+
+function chip(label, attr, val, on) {
+  return `<button class="btn ${on ? "" : "ghost"}" ${attr}="${val}" aria-pressed="${on}" style="flex:1;min-height:40px;padding:8px 10px">${label}</button>`;
+}
+
+function renderMealSettings() {
+  const box = $("mealsSettings");
+  if (!planFoods.length && !meals) { box.innerHTML = ""; return; }
+  const busy = meals && meals.days.some((d) => d.status === "loading");
+  box.innerHTML = `<div class="card">
+    <b>${meals ? "Your week of meals" : "Your plan is ready for meals"}</b>
+    <label style="margin-top:10px">Meals per day</label>
+    <div style="display:flex;gap:6px">${chip("2", "data-perday", 2, mealSettings.perDay === 2)}${chip("3", "data-perday", 3, mealSettings.perDay === 3)}</div>
+    <label style="margin-top:10px">Cooking time</label>
+    <div style="display:flex;gap:6px">${chip("Quick", "data-cook", "quick", mealSettings.cook === "quick")}${chip("Normal", "data-cook", "normal", mealSettings.cook === "normal")}${chip("I like to cook", "data-cook", "cook", mealSettings.cook === "cook")}</div>
+    <button class="btn primary block" id="makeMeals" ${busy || !planFoods.length ? "disabled" : ""}>${meals ? "Make new ideas" : "Make my week of meals"}</button>
+  </div>`;
+  box.querySelectorAll("[data-perday]").forEach((b) => b.onclick = () => { mealSettings.perDay = Number(b.dataset.perday); store.set("mealsPerDay", String(mealSettings.perDay)); renderMealSettings(); });
+  box.querySelectorAll("[data-cook]").forEach((b) => b.onclick = () => { mealSettings.cook = b.dataset.cook; store.set("mealCook", mealSettings.cook); renderMealSettings(); });
+  $("makeMeals").onclick = startMeals;
+}
+
+function mealCardHtml(di, mi, m) {
+  const list = m.items.map((it) => `<li>${esc(it.label)}</li>`).join("") + m.extras.map((x) => `<li class="note">${esc(x)}</li>`).join("");
+  const recipe = !m.open ? "" : m.loading ? `<p class="note">Writing the recipe…</p>` : m.detail
+    ? `<ol class="ings">${m.detail.steps.map((t) => `<li>${esc(t)}</li>`).join("")}</ol>` : "";
+  return `<div class="card">
+    <b>${esc(m.title)}</b>
+    <small class="note" style="display:block">${esc(m.summary)}</small>
+    <small class="note" style="display:block;margin-top:4px">≈${m.protein}g protein from your plan foods · ${m.minutes} min</small>
+    <ul class="ings">${list}</ul>
+    ${recipe}
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px">
+      <button class="btn ghost" data-act="recipe" data-d="${di}" data-m="${mi}" style="padding:10px 6px">${m.open ? "Hide recipe" : "Recipe"}</button>
+      <button class="btn ghost" data-act="swap" data-d="${di}" data-m="${mi}" style="padding:10px 6px" ${m.swapping ? "disabled" : ""}>${m.swapping ? "Swapping…" : "Swap"}</button>
+      <button class="btn ghost" data-act="save" data-d="${di}" data-m="${mi}" style="padding:10px 6px" ${m.saved ? "disabled" : ""}>${m.saved ? "Saved" : "Save"}</button>
+    </div>
+  </div>`;
+}
+
+function renderMeals() {
+  renderMealSettings();
+  const box = $("mealsWeek");
+  if (!meals) {
+    box.innerHTML = planFoods.length
+      ? `<div class="card empty"><p style="margin:0">Tap <b>Make my week of meals</b> above. You get meal ideas that use the exact foods in your plan, so you stop eating the same thing every day.</p></div>`
+      : `<div class="card empty"><b>A week of meals from the foods you're buying</b>
+          <p style="margin-top:6px">Build a plan on the Plan tab first. Then come back here for meal ideas that use those exact foods, so you stop eating the same thing every day.</p>
+          <button class="btn primary" id="goPlanTab">Go to Plan</button></div>`;
+    if ($("goPlanTab")) $("goPlanTab").onclick = () => setTab("protein");
+    return;
+  }
+  box.innerHTML = `<small class="note" style="display:block;margin-bottom:6px">Protein amounts are calculated from the exact amounts of your plan foods, not guessed by AI. Check cook times and safe internal temperatures for meat, poultry, pork and fish.</small>` +
+    meals.days.map((d, di) => {
+      const head = `<h3 style="margin:18px 0 6px;font-size:1.05rem">Day ${di + 1}${d.status === "ok" ? ` <small class="note" style="font-weight:400">≈${d.dayProtein}g protein</small>` : ""}</h3>`;
+      if (d.status === "loading") return head + `<div class="card"><p class="note" style="margin:0">Planning day ${di + 1}…</p></div>`;
+      if (d.status === "error") return head + `<div class="card"><p class="note" style="margin:0 0 8px">${esc(d.error)}</p><button class="btn ghost" data-retry="${di}">Try again</button></div>`;
+      return head + d.meals.map((m, mi) => mealCardHtml(di, mi, m)).join("");
+    }).join("");
+}
+
+$("mealsWeek").addEventListener("click", (ev) => {
+  const retry = ev.target.closest("[data-retry]");
+  if (retry) return loadDay(Number(retry.dataset.retry));
+  const btn = ev.target.closest("button[data-act]");
+  if (!btn || !meals) return;
+  const di = Number(btn.dataset.d), mi = Number(btn.dataset.m);
+  if (btn.dataset.act === "recipe") toggleRecipe(di, mi);
+  if (btn.dataset.act === "swap") swapMeal(di, mi);
+  if (btn.dataset.act === "save") saveMeal(di, mi);
+});
+renderMeals();
+renderPlanHome(null); // new visitors see how it works right away
 
 // ---- Helpers ----
 async function api(action, extra = {}) {
