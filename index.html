@@ -526,6 +526,7 @@ async function loadLists() {
       return `<details class="card saved">
         <summary><span class="t">${esc(l.title)}<span class="meta">${n} ${n === 1 ? "item" : "items"}, saved ${esc(date)}</span></span></summary>
         <ul class="ings">${l.ingredients.map((i) => `<li>${esc(i.qty ? i.qty + " " : "")}${esc(i.name)}</li>`).join("")}</ul>
+        ${(l.steps || []).length ? `<b style="font-size:.95rem">Recipe</b><ol class="ings">${l.steps.map((t) => `<li>${esc(t)}</li>`).join("")}</ol>` : ""}
         <div class="actions">
           <button class="btn primary" data-act="price" data-id="${esc(l.id)}">Get prices</button>
           <button class="btn ghost" data-act="copy" data-id="${esc(l.id)}">Copy</button>
@@ -557,7 +558,9 @@ $("lists").addEventListener("click", async (ev) => {
 });
 
 function listText(l) {
-  return [l.title, ...l.ingredients.map((i) => `${i.qty ? i.qty + " " : ""}${i.name}`)].join("\n");
+  const lines = [l.title, ...l.ingredients.map((i) => `${i.qty ? i.qty + " " : ""}${i.name}`)];
+  if ((l.steps || []).length) lines.push("", "Recipe:", ...l.steps.map((t, n) => `${n + 1}. ${t}`));
+  return lines.join("\n");
 }
 async function copyList(l) {
   try { await navigator.clipboard.writeText(listText(l)); banner("ok", "List copied."); }
@@ -641,6 +644,8 @@ async function loadDay(i) {
 
 const sumProtein = (d) => d.meals.reduce((t, m) => t + m.protein, 0);
 
+const detailPayload = (m) => ({ title: m.title, summary: m.summary, items: m.items.map((it) => ({ food: it.food, amount: it.amount })), extras: m.extras });
+
 async function toggleRecipe(di, mi) {
   const gen = meals, m = gen.days[di].meals[mi];
   if (m.open) { m.open = false; return renderMeals(); }
@@ -648,7 +653,7 @@ async function toggleRecipe(di, mi) {
   if (!m.detail) {
     m.loading = true; renderMeals();
     try {
-      m.detail = await mealApi("detail", { meal: { title: m.title, summary: m.summary, items: m.items.map((it) => ({ food: it.food, amount: it.amount })), extras: m.extras } });
+      m.detail = await mealApi("detail", { meal: detailPayload(m) });
     } catch (e) { m.open = false; banner("err", e.message || "Could not write that recipe."); }
     m.loading = false;
   }
@@ -669,13 +674,22 @@ async function swapMeal(di, mi) {
 
 async function saveMeal(di, mi) {
   if (!user) return banner("err", "Sign in to save meals.");
-  const m = meals.days[di].meals[mi];
+  const gen = meals, m = gen.days[di].meals[mi];
+  m.saving = true; renderMeals();
   try {
-    // Saves only the meal title, food names and amounts. No Kroger products or prices.
-    await api("save", { title: m.title, ingredients: [...m.items.map((it) => ({ name: it.food, qty: it.qty })), ...m.extras.map((n) => ({ name: n, qty: "" }))] });
-    m.saved = true; renderMeals(); loadLists();
-    banner("ok", "Saved. Find it under Saved meals below.");
+    // A saved meal always includes its recipe, so write it now if it has not been opened yet.
+    if (!m.detail) m.detail = await mealApi("detail", { meal: detailPayload(m) });
+    const ingredients = m.detail.ingredients?.length
+      ? m.detail.ingredients
+      : [...m.items.map((it) => ({ name: it.food, qty: it.qty })), ...m.extras.map((n) => ({ name: n, qty: "" }))];
+    // Saves only the meal title, ingredient names and amounts, and the recipe steps. No Kroger products or prices.
+    await api("save", { title: m.title, ingredients, steps: m.detail.steps });
+    m.saved = true;
+    banner("ok", "Saved with its recipe. Find it under Saved meals below.");
+    loadLists();
   } catch (e) { banner("err", e.message || "Could not save this meal."); }
+  m.saving = false;
+  if (meals === gen) renderMeals();
 }
 
 function chip(label, attr, val, on) {
@@ -712,7 +726,7 @@ function mealCardHtml(di, mi, m) {
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px">
       <button class="btn ghost" data-act="recipe" data-d="${di}" data-m="${mi}" style="padding:10px 6px">${m.open ? "Hide recipe" : "Recipe"}</button>
       <button class="btn ghost" data-act="swap" data-d="${di}" data-m="${mi}" style="padding:10px 6px" ${m.swapping ? "disabled" : ""}>${m.swapping ? "Swapping…" : "Swap"}</button>
-      <button class="btn ghost" data-act="save" data-d="${di}" data-m="${mi}" style="padding:10px 6px" ${m.saved ? "disabled" : ""}>${m.saved ? "Saved" : "Save"}</button>
+      <button class="btn ghost" data-act="save" data-d="${di}" data-m="${mi}" style="padding:10px 6px" ${m.saved || m.saving ? "disabled" : ""}>${m.saved ? "Saved" : m.saving ? "Saving…" : "Save"}</button>
     </div>
   </div>`;
 }
