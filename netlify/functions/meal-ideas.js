@@ -26,6 +26,7 @@ const COOK = {
   cook: "Meals can take up to an hour when that makes them better.",
 };
 const G_PER_OZ = 28.3495;
+const BILLING = /credit balance|billing|purchase credits|plans & billing/i;
 const clean = (v, n) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
 
 function cleanFoods(input) {
@@ -84,7 +85,11 @@ async function askModel(system, user, maxTokens) {
     body: JSON.stringify({ model: MODEL, max_tokens: maxTokens, system, messages: [{ role: "user", content: user }] }),
   });
   const data = await r.json();
-  if (!r.ok) throw new Error(data.error?.message || "Model error");
+  if (!r.ok) {
+    const err = new Error(data.error?.message || "Model error");
+    err.status = r.status;
+    throw err;
+  }
   const out = (data.content || []).filter((c) => c.type === "text").map((c) => c.text).join("");
   return JSON.parse(out.slice(out.indexOf("{"), out.lastIndexOf("}") + 1));
 }
@@ -173,6 +178,11 @@ Extras: ${m.extras.join(", ") || "none"}`;
 
     return res(400, { error: "Unknown action" });
   } catch (e) {
+    // The real reason goes to the Netlify function logs; the user gets a short, honest message.
+    console.error("meal-ideas failed:", e.status || "", e.message);
+    const outOfCredit = e.status === 402 || (e.status === 400 && BILLING.test(e.message || ""));
+    if (outOfCredit || e.status === 401 || e.status === 403) return res(503, { error: "Meal ideas are temporarily unavailable." });
+    if (e.status === 429 || e.status === 529) return res(503, { error: "Meal ideas are busy right now. Try again in a minute." });
     return res(500, { error: "Could not build meal ideas. Try again." });
   }
 };
