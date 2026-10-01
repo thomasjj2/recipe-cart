@@ -2,7 +2,7 @@
 // Actions:
 //   "day"    { dayIndex }                -> { meals: [...], dayProtein }
 //   "swap"   { dayIndex, meal, avoid }   -> { meals: [oneMeal] }
-//   "detail" { meal }                    -> { ingredients: [{ name, qty }], steps: [...] }
+//   "detail" { meal }                    -> { ingredients: [{ name, qty }], steps: [...], servings, proteinPerServing }
 //
 // foods: [{ name, weeklyProtein }]  (the user's own food names and the protein grams the plan gives them)
 //
@@ -173,7 +173,9 @@ Extras: ${m.extras.join(", ") || "none"}`;
         .map((i) => ({ name: clean(i?.name, 100), qty: clean(i?.qty, 50) })).filter((i) => i.name).slice(0, 15);
       const steps = (Array.isArray(out.steps) ? out.steps : []).map((s) => clean(s, 300)).filter(Boolean).slice(0, 6);
       if (!steps.length) return res(502, { error: "Could not write that recipe. Try again." });
-      return res(200, { ingredients, steps });
+      // Every planned meal is written for one person, so servings is 1. The protein figure is the one we
+      // calculated from our own table (plan foods only), never a number from the model.
+      return res(200, { ingredients, steps, servings: 1, proteinPerServing: m.protein });
     }
 
     return res(400, { error: "Unknown action" });
