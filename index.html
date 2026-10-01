@@ -265,12 +265,22 @@ $("go").onclick = async () => {
     parsed = await postJSON("/.netlify/functions/parse-recipe", { text });
     $("list").innerHTML = "<p>Looking up prices near you…</p>";
     matched = await postJSON("/.netlify/functions/match-products", { ingredients: parsed.ingredients, zip: $("zip").value.trim() });
-    renderList(parsed.title, matched.items, { canSave: true });
+    renderList(parsed.title, matched.items, { canSave: true, servings: parsed.servings, protein: parsed.proteinPerServing });
   } catch (e) { banner("err", e.message || "Something went wrong."); $("list").innerHTML = ""; }
   $("go").disabled = false;
 };
 
-function renderList(title, items, { canSave }) {
+function nutritionLine(servings, protein) {
+  const parts = [];
+  if (servings) parts.push(`${servings} ${servings === 1 ? "serving" : "servings"}`);
+  if (servings === 1 && protein) parts.push(`≈${protein}g protein`);
+  else if (servings && protein) parts.push(`≈${servings * protein}g protein total`, `≈${protein}g each`);
+  else if (protein) parts.push(`≈${protein}g protein per serving`);
+  return parts.join(" · ");
+}
+
+function renderList(title, items, { canSave, servings, protein }) {
+  const nut = nutritionLine(servings, protein);
   const total = items.reduce((s, i) => s + (i.product?.promoPrice || i.product?.price || 0), 0);
   const rows = items.map((i) => {
     const p = i.product;
@@ -282,9 +292,11 @@ function renderList(title, items, { canSave }) {
   }).join("");
   $("list").innerHTML = `
     <div class="card"><b>${esc(title || "Shopping list")}</b>
+      ${nut ? `<small class="note" style="display:block;margin:4px 0 8px">${esc(nut)}</small>` : ""}
       ${rows}
       <div class="total"><span>Estimated total</span><span>${money(total)}</span></div>
-      <small class="note">Prices are live estimates from Kroger and can differ at checkout.</small>
+      ${servings > 1 && total ? `<div class="total" style="font-size:1rem;font-weight:400"><span>Cost per serving</span><span>${money(total / servings)}</span></div>` : ""}
+      <small class="note">Prices are live estimates from Kroger and can differ at checkout.${nut ? " Servings and protein are estimates." : ""}</small>
       <button class="btn block" id="sendCart">Send to my Kroger cart</button>
       ${canSave ? `<button class="btn ghost block" id="saveList">Add to Recipe Cart List</button>` : ""}
     </div>`;
@@ -489,13 +501,13 @@ function renderPlanHome(s) {
   };
 }
 
-// Saves ONLY the title and ingredient names and quantities. No Kroger products or prices.
+// Saves ONLY the title, ingredient names and quantities, servings, and estimated protein. No Kroger products or prices.
 async function saveList() {
   if (!user) return banner("err", "Sign in to save lists.");
   const btn = $("saveList");
   btn.disabled = true;
   try {
-    await api("save", { title: parsed.title, ingredients: parsed.ingredients });
+    await api("save", { title: parsed.title, ingredients: parsed.ingredients, servings: parsed.servings, proteinPerServing: parsed.proteinPerServing });
     btn.textContent = "Saved";
     banner("ok", "Saved. You can find it under Saved meals on the Meals tab.");
   } catch (e) {
@@ -523,12 +535,14 @@ async function loadLists() {
     box.innerHTML = savedLists.map((l) => {
       const date = new Date(l.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
       const n = l.ingredients.length;
+      const nut = nutritionLine(l.servings, l.proteinPerServing);
       return `<details class="card saved">
-        <summary><span class="t">${esc(l.title)}<span class="meta">${n} ${n === 1 ? "item" : "items"}, saved ${esc(date)}</span></span></summary>
+        <summary><span class="t">${esc(l.title)}<span class="meta">${n} ${n === 1 ? "item" : "items"}, saved ${esc(date)}</span>${nut ? `<span class="meta">${esc(nut)}</span>` : ""}</span></summary>
         <ul class="ings">${l.ingredients.map((i) => `<li>${esc(i.qty ? i.qty + " " : "")}${esc(i.name)}</li>`).join("")}</ul>
         ${(l.steps || []).length ? `<b style="font-size:.95rem">Recipe</b><ol class="ings">${l.steps.map((t) => `<li>${esc(t)}</li>`).join("")}</ol>` : ""}
         <div class="actions">
           <button class="btn primary" data-act="price" data-id="${esc(l.id)}">Get prices</button>
+          ${l.servings ? "" : `<button class="btn ghost" data-act="nutrition" data-id="${esc(l.id)}">Add nutrition info</button>`}
           <button class="btn ghost" data-act="copy" data-id="${esc(l.id)}">Copy</button>
           <button class="btn ghost" data-act="download" data-id="${esc(l.id)}">Download</button>
           <button class="btn danger" data-act="delete" data-id="${esc(l.id)}">Delete</button>
@@ -548,6 +562,7 @@ $("lists").addEventListener("click", async (ev) => {
   if (!l) return;
   const act = btn.dataset.act;
   if (act === "price") return priceList(l);
+  if (act === "nutrition") return addNutrition(l, btn);
   if (act === "copy") return copyList(l);
   if (act === "download") return downloadList(l);
   if (act === "delete") {
@@ -556,6 +571,23 @@ $("lists").addEventListener("click", async (ev) => {
     catch (e) { banner("err", e.message || "Could not delete that list."); }
   }
 });
+
+// Fills in servings and estimated protein for a list saved before those fields existed.
+async function addNutrition(l, btn) {
+  btn.disabled = true; btn.textContent = "Working…";
+  try {
+    // Saved meals from the plan always include steps and are written for one person.
+    const hint = (l.steps || []).length ? "This is one person's single meal, so servings is 1.\n" : "";
+    const p = await postJSON("/.netlify/functions/parse-recipe", { text: hint + listText(l) });
+    if (!p.servings || p.proteinPerServing == null) throw new Error("Could not estimate nutrition for this one.");
+    await api("setNutrition", { id: l.id, servings: p.servings, proteinPerServing: p.proteinPerServing });
+    banner("ok", "Nutrition info added.");
+    loadLists();
+  } catch (e) {
+    btn.disabled = false; btn.textContent = "Add nutrition info";
+    banner("err", e.message || "Could not add nutrition info.");
+  }
+}
 
 function listText(l) {
   const lines = [l.title, ...l.ingredients.map((i) => `${i.qty ? i.qty + " " : ""}${i.name}`)];
@@ -581,12 +613,12 @@ async function priceList(l) {
   const zip = $("storeZip").value.trim() || $("zip").value.trim();
   if (!zip) { setTab("protein"); banner("err", "Add your ZIP code or pick your store on the Plan tab first, then get prices again."); $("storeZip").focus(); return; }
   $("banner").innerHTML = "";
-  parsed = { title: l.title, ingredients: l.ingredients };
+  parsed = { title: l.title, ingredients: l.ingredients, servings: l.servings, proteinPerServing: l.proteinPerServing };
   $("list").innerHTML = "<p>Looking up prices near you…</p>";
   $("list").scrollIntoView({ behavior: "smooth", block: "start" });
   try {
     matched = await postJSON("/.netlify/functions/match-products", { ingredients: l.ingredients, zip });
-    renderList(l.title, matched.items, { canSave: false });
+    renderList(l.title, matched.items, { canSave: false, servings: l.servings, protein: l.proteinPerServing });
   } catch (e) { banner("err", e.message || "Something went wrong."); $("list").innerHTML = ""; }
 }
 
@@ -683,7 +715,7 @@ async function saveMeal(di, mi) {
       ? m.detail.ingredients
       : [...m.items.map((it) => ({ name: it.food, qty: it.qty })), ...m.extras.map((n) => ({ name: n, qty: "" }))];
     // Saves only the meal title, ingredient names and amounts, and the recipe steps. No Kroger products or prices.
-    await api("save", { title: m.title, ingredients, steps: m.detail.steps });
+    await api("save", { title: m.title, ingredients, steps: m.detail.steps, servings: m.detail.servings, proteinPerServing: m.detail.proteinPerServing });
     m.saved = true;
     banner("ok", "Saved with its recipe. Find it under Saved meals below.");
     loadLists();
