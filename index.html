@@ -640,7 +640,7 @@ $("deleteAccount").onclick = async () => {
 let planFoods = [];
 let meals = null; // { foods, days: [{ status, meals, dayProtein, error }] }
 const mealSettings = {
-  perDay: Number(store.get("mealsPerDay")) === 2 ? 2 : 3,
+  perDay: [2, 3, 4].includes(Number(store.get("mealsPerDay"))) ? Number(store.get("mealsPerDay")) : 3,
   cook: ["quick", "normal", "cook"].includes(store.get("mealCook")) ? store.get("mealCook") : "normal",
 };
 
@@ -666,7 +666,7 @@ async function loadDay(i) {
   try {
     const r = await mealApi("day", { dayIndex: i });
     if (meals !== gen) return;
-    d.meals = r.meals; d.dayProtein = r.dayProtein; d.status = "ok";
+    d.meals = r.meals; d.dayProtein = r.dayProtein; d.dailyTarget = r.dailyTarget; d.status = "ok";
   } catch (e) {
     if (meals !== gen) return;
     d.status = "error"; d.error = e.message || "Could not plan this day.";
@@ -676,7 +676,7 @@ async function loadDay(i) {
 
 const sumProtein = (d) => d.meals.reduce((t, m) => t + m.protein, 0);
 
-const detailPayload = (m) => ({ title: m.title, summary: m.summary, items: m.items.map((it) => ({ food: it.food, amount: it.amount })), extras: m.extras });
+const detailPayload = (m) => ({ title: m.title, type: m.type, summary: m.summary, items: m.items.map((it) => ({ food: it.food, amount: it.amount })), extras: m.extras });
 
 async function toggleRecipe(di, mi) {
   const gen = meals, m = gen.days[di].meals[mi];
@@ -697,7 +697,7 @@ async function swapMeal(di, mi) {
   m.swapping = true; renderMeals();
   try {
     const avoid = gen.days.flatMap((x) => x.meals.map((y) => y.title));
-    const r = await mealApi("swap", { dayIndex: di, meal: { title: m.title, items: m.items.map((it) => ({ food: it.food, amount: it.amount })) }, avoid });
+    const r = await mealApi("swap", { dayIndex: di, meal: { title: m.title, type: m.type, items: m.items.map((it) => ({ food: it.food, amount: it.amount })) }, avoid });
     if (meals !== gen) return;
     d.meals[mi] = r.meals[0]; d.dayProtein = sumProtein(d);
   } catch (e) { m.swapping = false; banner("err", e.message || "Could not swap that meal."); }
@@ -735,7 +735,8 @@ function renderMealSettings() {
   box.innerHTML = `<div class="card">
     <b>${meals ? "Your week of meals" : "Your plan is ready for meals"}</b>
     <label style="margin-top:10px">Meals per day</label>
-    <div style="display:flex;gap:6px">${chip("2", "data-perday", 2, mealSettings.perDay === 2)}${chip("3", "data-perday", 3, mealSettings.perDay === 3)}</div>
+    <div style="display:flex;gap:6px">${chip("2", "data-perday", 2, mealSettings.perDay === 2)}${chip("3", "data-perday", 3, mealSettings.perDay === 3)}${chip("4", "data-perday", 4, mealSettings.perDay === 4)}</div>
+    <small class="note" style="display:block;margin-top:6px">Each meal stays around 50g of protein. If your plan needs more, snacks are added.</small>
     <label style="margin-top:10px">Cooking time</label>
     <div style="display:flex;gap:6px">${chip("Quick", "data-cook", "quick", mealSettings.cook === "quick")}${chip("Normal", "data-cook", "normal", mealSettings.cook === "normal")}${chip("I like to cook", "data-cook", "cook", mealSettings.cook === "cook")}</div>
     <button class="btn primary block" id="makeMeals" ${busy || !planFoods.length ? "disabled" : ""}>${meals ? "Make new ideas" : "Make my week of meals"}</button>
@@ -752,7 +753,7 @@ function mealCardHtml(di, mi, m) {
   return `<div class="card">
     <b>${esc(m.title)}</b>
     <small class="note" style="display:block">${esc(m.summary)}</small>
-    <small class="note" style="display:block;margin-top:4px">≈${m.protein}g protein from your plan foods · ${m.minutes} min</small>
+    <small class="note" style="display:block;margin-top:4px">${m.type === "snack" ? "Snack · " : ""}≈${m.protein}g protein from your plan foods · ${m.minutes} min</small>
     <ul class="ings">${list}</ul>
     ${recipe}
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px">
@@ -777,7 +778,7 @@ function renderMeals() {
   }
   box.innerHTML = `<small class="note" style="display:block;margin-bottom:6px">Protein amounts are calculated from the exact amounts of your plan foods, not guessed by AI. Check cook times and safe internal temperatures for meat, poultry, pork and fish.</small>` +
     meals.days.map((d, di) => {
-      const head = `<h3 style="margin:18px 0 6px;font-size:1.05rem">Day ${di + 1}${d.status === "ok" ? ` <small class="note" style="font-weight:400">≈${d.dayProtein}g protein</small>` : ""}</h3>`;
+      const head = `<h3 style="margin:18px 0 6px;font-size:1.05rem">Day ${di + 1}${d.status === "ok" ? ` <small class="note" style="font-weight:400">≈${d.dayProtein}g protein${d.dailyTarget && d.dayProtein < d.dailyTarget * 0.9 ? ` of ${d.dailyTarget}g` : ""}</small>` : ""}</h3>`;
       if (d.status === "loading") return head + `<div class="card"><p class="note" style="margin:0">Planning day ${di + 1}…</p></div>`;
       if (d.status === "error") return head + `<div class="card"><p class="note" style="margin:0 0 8px">${esc(d.error)}</p><button class="btn ghost" data-retry="${di}">Try again</button></div>`;
       return head + d.meals.map((m, mi) => mealCardHtml(di, mi, m)).join("");
