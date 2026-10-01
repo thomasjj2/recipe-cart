@@ -1,6 +1,6 @@
 // POST { idToken, action, foods, mealsPerDay, cookTime, ... } -> meal ideas built from the foods in the user's protein plan.
 // Actions:
-//   "day"    { dayIndex }                -> { meals: [...], dayProtein }
+//   "day"    { dayIndex }                -> { meals: [...], dayProtein, dailyTarget }  (meals may include snacks, type "snack")
 //   "swap"   { dayIndex, meal, avoid }   -> { meals: [oneMeal] }
 //   "detail" { meal }                    -> { ingredients: [{ name, qty }], steps: [...], servings, proteinPerServing }
 //
@@ -26,6 +26,9 @@ const COOK = {
   cook: "Meals can take up to an hour when that makes them better.",
 };
 const G_PER_OZ = 28.3495;
+// No single meal should carry more than about 50g of protein, and a snack about 30g. If the plan needs more
+// than the chosen number of meals can hold, up to 2 snack slots are added so the protein is spread out.
+const MEAL_CAP = 50, SNACK_CAP = 30, MAX_SNACKS = 2, CAP_TOLERANCE = 10;
 const BILLING = /credit balance|billing|purchase credits|plans & billing/i;
 const clean = (v, n) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
 
@@ -47,22 +50,29 @@ function cleanFoods(input) {
 const proteinOf = (f, amount) => (f.isCount ? amount * f.nutrition.proteinPerUnit : (amount / 100) * f.nutrition.proteinPer100g);
 
 // Turns one model-written meal into a safe, validated meal with protein computed from our own table.
+// Meals over the protein cap are scaled down so no single meal or snack is stuffed.
 function sanitizeMeal(m, foods) {
   const byName = new Map(foods.map((f) => [f.name.toLowerCase(), f]));
   const merged = new Map();
   for (const it of Array.isArray(m?.items) ? m.items : []) {
     const f = byName.get(String(it?.food ?? "").toLowerCase().trim());
-    let amount = Number(it?.amount);
+    const amount = Number(it?.amount);
     if (!f || !(amount > 0)) continue;
-    amount = f.isCount ? Math.min(30, Math.round(amount * 2) / 2) : Math.min(2000, Math.round(amount / 5) * 5);
-    if (amount <= 0) continue;
     merged.set(f.name, (merged.get(f.name) || 0) + amount);
   }
-  const items = [...merged].map(([name, amount]) => {
+  const type = m?.type === "snack" ? "snack" : "meal";
+  const cap = type === "snack" ? SNACK_CAP : MEAL_CAP;
+  const rawProtein = [...merged].reduce((t, [name, amount]) => t + proteinOf(byName.get(name.toLowerCase()), amount), 0);
+  const scale = rawProtein > cap + CAP_TOLERANCE ? cap / rawProtein : 1;
+  const items = [];
+  for (const [name, rawAmount] of merged) {
     const f = byName.get(name.toLowerCase());
+    const scaled = rawAmount * scale;
+    const amount = f.isCount ? Math.min(30, Math.round(scaled * 2) / 2) : Math.min(2000, Math.round(scaled / 5) * 5);
+    if (amount <= 0) continue;
     const qty = f.isCount ? String(amount) : `${amount} g (${(amount / G_PER_OZ).toFixed(1)} oz)`;
-    return { food: name, amount, qty, label: f.isCount ? `${amount} ${name}` : `${qty} ${name}`, protein: Math.round(proteinOf(f, amount)) };
-  });
+    items.push({ food: name, amount, qty, label: f.isCount ? `${amount} ${name}` : `${qty} ${name}`, protein: Math.round(proteinOf(f, amount)) });
+  }
   if (!items.length) return null;
   const title = clean(m?.title, 80);
   if (!title) return null;
@@ -70,12 +80,21 @@ function sanitizeMeal(m, foods) {
   const extras = (Array.isArray(m?.extras) ? m.extras : []).map((x) => clean(x, 40)).filter(Boolean).slice(0, 6);
   return {
     title,
+    type,
     summary: clean(m?.summary, 220),
     minutes,
     items,
     extras,
     protein: items.reduce((s, i) => s + i.protein, 0),
   };
+}
+
+// How many meals and snacks a day needs so each stays under its protein cap.
+function slotPlan(foods, perDay) {
+  const daily = foods.reduce((t, f) => t + proteinOf(f, f.weeklyAmount / 7), 0);
+  let snacks = 0;
+  while (snacks < MAX_SNACKS && perDay * MEAL_CAP + snacks * SNACK_CAP < daily) snacks++;
+  return { meals: perDay, snacks, daily: Math.round(daily) };
 }
 
 async function askModel(system, user, maxTokens) {
@@ -101,7 +120,9 @@ const MEAL_SYSTEM = `You plan varied, realistic home cooked meals for one person
 - "food" must be copied exactly from the list. "amount" is grams of that food as bought for weight foods, or a plain number for count foods like eggs.
 - Never mention protein, calories, or any nutrition numbers. Never mention prices or brands.
 - Meals must differ from each other in flavor and style.
-Respond with ONLY JSON, no markdown: {"meals":[{"title":str,"summary":str,"minutes":number,"items":[{"food":str,"amount":number}],"extras":[str]}]}
+- Split each food's daily amount across the meals and snacks so every meal gets a similar share. Never put most of a day's food into one meal.
+- A snack is a small, quick item (5 minutes or less) that gets a smaller share than a meal. List the meals first, then the snacks.
+Respond with ONLY JSON, no markdown: {"meals":[{"title":str,"type":"meal" or "snack","summary":str,"minutes":number,"items":[{"food":str,"amount":number}],"extras":[str]}]}
 "summary" is one short sentence describing how the meal is made.`;
 
 const DETAIL_SYSTEM = `Write a short, practical recipe for the meal described. Respond with ONLY JSON, no markdown: {"ingredients":[{"name":str,"qty":str}],"steps":[str]}
@@ -129,20 +150,22 @@ exports.handler = async (event) => {
 
     const foods = cleanFoods(b.foods);
     if (!foods.length) return res(400, { error: "Your plan has no foods with protein estimates to build meals from." });
-    const perDay = b.mealsPerDay === 2 ? 2 : 3;
+    const perDay = [2, 3, 4].includes(Number(b.mealsPerDay)) ? Number(b.mealsPerDay) : 3;
     const cook = COOK[b.cookTime] ? b.cookTime : "normal";
 
     if (b.action === "day") {
       const i = Math.max(0, Math.min(6, Math.round(Number(b.dayIndex)) || 0));
-      const user = `Plan ${perDay} meals for day ${i + 1} of 7.
+      const plan = slotPlan(foods, perDay);
+      const slots = `${plan.meals} meals${plan.snacks ? ` and ${plan.snacks} snack${plan.snacks > 1 ? "s" : ""}` : ""}`;
+      const user = `Plan ${slots} for day ${i + 1} of 7.
 Style for the day: ${THEMES[i % THEMES.length]}.
 ${COOK[cook]}
 Protein foods to spread across the day's meals:
 ${foodLines(foods)}`;
-      const out = await askModel(MEAL_SYSTEM, user, 1100);
-      const meals = (Array.isArray(out.meals) ? out.meals : []).map((m) => sanitizeMeal(m, foods)).filter(Boolean).slice(0, perDay);
+      const out = await askModel(MEAL_SYSTEM, user, 1400);
+      const meals = (Array.isArray(out.meals) ? out.meals : []).map((m) => sanitizeMeal(m, foods)).filter(Boolean).slice(0, plan.meals + plan.snacks);
       if (!meals.length) return res(502, { error: "Could not plan this day. Try again." });
-      return res(200, { meals, dayProtein: meals.reduce((s, m) => s + m.protein, 0) });
+      return res(200, { meals, dayProtein: meals.reduce((s, m) => s + m.protein, 0), dailyTarget: plan.daily });
     }
 
     if (b.action === "swap") {
@@ -150,13 +173,13 @@ ${foodLines(foods)}`;
       if (!old) return res(400, { error: "Missing meal to swap" });
       const avoid = (Array.isArray(b.avoid) ? b.avoid : []).map((t) => clean(t, 80)).filter(Boolean).slice(0, 30);
       const theme = THEMES[Math.floor(Math.random() * THEMES.length)];
-      const user = `Write exactly 1 replacement meal. Style: ${theme}.
+      const user = `Write exactly 1 replacement ${old.type === "snack" ? "snack (small and quick, 5 minutes or less)" : "meal"}. Style: ${theme}.
 ${COOK[cook]}
 Use these protein foods in these exact amounts:
 ${old.items.map((it) => `- ${it.food}: ${it.amount}${foods.find((f) => f.name === it.food)?.isCount ? " (count)" : " g"}`).join("\n")}
 Do not reuse any of these meal titles: ${avoid.join("; ") || "none"}`;
       const out = await askModel(MEAL_SYSTEM, user, 500);
-      const meal = sanitizeMeal((Array.isArray(out.meals) ? out.meals : [])[0], foods);
+      const meal = sanitizeMeal({ ...(Array.isArray(out.meals) ? out.meals : [])[0], type: old.type }, foods);
       if (!meal) return res(502, { error: "Could not find a swap. Try again." });
       return res(200, { meals: [meal] });
     }
