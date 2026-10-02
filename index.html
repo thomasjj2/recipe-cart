@@ -69,12 +69,12 @@ footer a{color:var(--mute)}
 <div id="signin"><span id="who">Not signed in</span><button id="signbtn">Sign in</button></div>
 <main>
 <h1>Recipe → Cart</h1>
-<p class="sub">Hit your weekly protein goal for less, send it to your Kroger cart, and get a week of meals from it.</p>
+<p class="sub">Hit your protein or calorie goal for less, send it to your Kroger cart, and get a week of meals from it.</p>
 
 <div id="banner" role="status"></div>
 
 <div class="tabs" role="tablist" aria-label="Sections">
-  <button role="tab" id="tabProtein" aria-selected="true" aria-controls="paneProtein">Plan</button>
+  <button role="tab" id="tabProtein" aria-selected="true" aria-controls="paneProtein">My goals</button>
   <button role="tab" id="tabBuild" aria-selected="false" aria-controls="paneBuild">Meals</button>
 </div>
 
@@ -102,9 +102,19 @@ footer a{color:var(--mute)}
       <button class="btn ghost" id="findStores" style="flex-shrink:0">Find stores</button>
     </div>
     <div id="storePicker"></div>
-    <label for="proteinTarget" style="margin-top:14px">Weekly protein target (grams)</label>
-    <input id="proteinTarget" type="text" inputmode="numeric" placeholder="700">
-    <label style="margin-top:14px">Your preferred protein sources, best first</label>
+    <label style="margin-top:14px">My goal</label>
+    <div id="goalChips" style="display:flex;gap:6px"></div>
+    <div id="proteinWrap">
+      <label for="proteinTarget" style="margin-top:14px">Weekly protein target (grams)</label>
+      <input id="proteinTarget" type="text" inputmode="numeric" placeholder="700">
+    </div>
+    <div id="calWrap">
+      <label for="calorieTarget" style="margin-top:14px">Daily calorie goal</label>
+      <input id="calorieTarget" type="text" inputmode="numeric" placeholder="2200">
+      <small class="note" id="calHint" style="display:block;margin-top:4px"></small>
+    </div>
+    <label id="foodsLabel" style="margin-top:14px">Your preferred protein sources, best first</label>
+    <small class="note" id="foodsHint" style="display:block;margin-bottom:6px" hidden>Include staples like rice, pasta, oats, potatoes, bread, or olive oil so the plan can reach your calories.</small>
     <div id="prefRows"></div>
     <button class="btn ghost" id="addPref" style="margin-top:6px">+ Add another</button>
     <button class="btn primary block" id="goProtein" style="margin-top:14px">Build my plan</button>
@@ -156,6 +166,19 @@ $("zip").value = store.get("zip") || "";
 $("zip").addEventListener("input", () => store.set("zip", $("zip").value.trim()));
 $("proteinTarget").value = store.get("proteinTarget") || "";
 $("proteinTarget").addEventListener("input", () => store.set("proteinTarget", $("proteinTarget").value.trim()));
+$("calorieTarget").value = store.get("calorieTarget") || "";
+$("calorieTarget").addEventListener("input", () => store.set("calorieTarget", $("calorieTarget").value.trim()));
+let goalType = ["protein", "calories", "both"].includes(store.get("goalType")) ? store.get("goalType") : "protein";
+function renderGoalUI() {
+  $("goalChips").innerHTML = [["protein", "Protein"], ["calories", "Calories"], ["both", "Both"]].map(([k, l]) => chip(l, "data-goal", k, goalType === k)).join("");
+  $("goalChips").querySelectorAll("[data-goal]").forEach((b) => b.onclick = () => { goalType = b.dataset.goal; store.set("goalType", goalType); renderGoalUI(); });
+  $("proteinWrap").hidden = goalType === "calories";
+  $("calWrap").hidden = goalType === "protein";
+  $("calHint").textContent = goalType === "calories" ? "We also make sure about a quarter of your calories come from protein." : "Estimates, not medical advice.";
+  $("foodsLabel").textContent = goalType === "protein" ? "Your preferred protein sources, best first" : "Foods you eat, best first";
+  $("foodsHint").hidden = goalType === "protein";
+}
+renderGoalUI();
 
 // Preferences are stored as a JSON array so they can be reordered.
 let prefs = [];
@@ -324,18 +347,20 @@ $("goProtein").onclick = async () => {
   const repriceFrom = pendingReprice;
   pendingReprice = null;
   const target = Number($("proteinTarget").value.trim());
+  const calories = Number($("calorieTarget").value.trim());
   const preferences = prefs.map((p) => p.trim()).filter(Boolean);
   const zip = $("storeZip").value.trim();
-  if (!target || target <= 0) return banner("err", "Enter a weekly protein target in grams.");
-  if (!preferences.length) return banner("err", "Add at least one protein source.");
+  if (goalType !== "calories" && (!target || target <= 0)) return banner("err", "Enter a weekly protein target in grams.");
+  if (goalType !== "protein" && !(calories >= 1200 && calories <= 6000)) return banner("err", "Enter a daily calorie goal between 1200 and 6000.");
+  if (!preferences.length) return banner("err", goalType === "protein" ? "Add at least one protein source." : "Add at least one food.");
   if (!selectedStore && !zip) return banner("err", "Pick your store, or enter a ZIP code.");
   $("banner").innerHTML = "";
   $("goProtein").disabled = true;
   $("proteinResults").innerHTML = "<p>Checking your store and building your plan…</p>";
-  lastRequest = { target, preferences };
+  lastRequest = { target, calories, goal: goalType, preferences };
   try {
     const r = await postJSON("/.netlify/functions/protein-plan", {
-      targetProteinPerWeek: target, preferences, zip,
+      goal: goalType, targetProteinPerWeek: target, targetCaloriesPerDay: calories, preferences, zip,
       locationId: selectedStore?.locationId || null,
     });
     renderProteinPlan(r, repriceFrom);
@@ -350,7 +375,8 @@ function renderProteinPlan(r, repriceFrom) {
   const v = r[planMode];
   const c = r.comparison;
   // Only food names and protein amounts are used for meal ideas. No Kroger product or price data.
-  planFoods = v.plan.filter((p) => p.packages && p.proteinFromThis).map((p) => ({ name: p.name, weeklyProtein: p.proteinFromThis }));
+  planFoods = v.plan.filter((p) => p.packages && (p.proteinFromThis || p.caloriesFromThis)).map((p) => ({ name: p.name, weeklyProtein: p.proteinFromThis || 0, weeklyCalories: p.caloriesFromThis || 0 }));
+  mealSettings.focus = r.goal || "protein";
   const rows = v.plan.map((p) => {
     const prod = p.product;
     const fallbackNote = p.wasFallback
@@ -360,7 +386,7 @@ function renderProteinPlan(r, repriceFrom) {
       : p.confidence === "moderate" ? `<span class="badge moderate">Estimate</span>` : "";
     const valueBit = p.costPer100gProtein != null ? ` · ${money(p.costPer100gProtein)} per 100g protein` : "";
     const qtyLine = p.packages
-      ? `${p.packages} package${p.packages === 1 ? "" : "s"} · ≈${p.proteinFromThis}g protein${valueBit}${confBadge}`
+      ? `${p.packages} package${p.packages === 1 ? "" : "s"} · ≈${p.proteinFromThis ?? 0}g protein${p.caloriesFromThis ? ` · ≈${p.caloriesFromThis} cal` : ""}${valueBit}${confBadge}`
       : (p.note || "Couldn't estimate a quantity for this item.");
     return `${fallbackNote}
       <div class="item">
@@ -376,10 +402,18 @@ function renderProteinPlan(r, repriceFrom) {
   const skippedNote =
     (notCarried.length ? `<small class="note" style="display:block">Not carried at your store, so skipped: ${notCarried.map((u) => esc(u.name)).join(", ")}.</small>` : "") +
     (noEstimate.length ? `<small class="note" style="display:block">No protein estimate for these foods yet, so they were left out: ${noEstimate.map((u) => esc(u.name)).join(", ")}.</small>` : "");
-  const shortfallNote = v.shortfall > 0
+  const shortfallNote = v.shortfall > 0 && r.goal !== "calories"
     ? `<div class="fallbacknote">This plan is ${v.shortfall}g short of your ${r.targetProteinPerWeek}g goal. Add another protein source to close the gap.</div>`
     : "";
 
+  const calShort = v.calorieShortfall > 0
+    ? `<div class="fallbacknote">This plan is about ${Math.round(v.calorieShortfall / 7)} calories per day short. Add foods like rice, pasta, oats, or oil to your list to close the gap.</div>` : "";
+  const proteinRow = r.goal === "calories"
+    ? `<div class="total" style="font-size:1rem;font-weight:400"><span>Protein</span><span>≈${Math.round(v.totalProteinEstimate / 7)}g per day</span></div>`
+    : `<div class="total"><span>Estimated protein</span><span>${v.totalProteinEstimate}g of ${r.targetProteinPerWeek}g</span></div>`;
+  const calRow = r.goal === "protein"
+    ? `<div class="total" style="font-size:1rem;font-weight:400"><span>Calories</span><span>≈${Math.round(v.totalCaloriesEstimate / 7)} per day</span></div>`
+    : `<div class="total"><span>Estimated calories</span><span>${Math.round(v.totalCaloriesEstimate / 7)} of ${r.targetCaloriesPerDay} per day</span></div>`;
   let compareNote = "";
   if (c.same) compareNote = "Both modes pick the same products this week.";
   else if (!c.comparable) compareNote = "Cheapest mode covers less protein than your ranking, so the totals can't be compared directly.";
@@ -396,11 +430,11 @@ function renderProteinPlan(r, repriceFrom) {
         <button class="btn ${planMode === "cheapest" ? "" : "ghost"}" data-mode="cheapest" aria-pressed="${planMode === "cheapest"}" style="flex:1">Cheapest</button>
         <button class="btn ${planMode === "ranked" ? "" : "ghost"}" data-mode="ranked" aria-pressed="${planMode === "ranked"}" style="flex:1">Your ranking</button>
       </div>
-      <small class="note" style="display:block">${planMode === "cheapest" ? "Lowest price per gram of protein, using only the foods you listed." : "Your foods in the order you ranked them."}</small>
-      <div class="total"><span>Estimated protein</span><span>${v.totalProteinEstimate}g of ${r.targetProteinPerWeek}g</span></div>
+      <small class="note" style="display:block">${planMode === "cheapest" ? (r.goal === "calories" ? "Lowest price per calorie that still covers your protein, using only the foods you listed." : "Lowest price per gram of protein, using only the foods you listed.") : "Your foods in the order you ranked them."}</small>
+      ${r.goal === "calories" ? calRow + proteinRow : proteinRow + calRow}
       <div class="total" style="font-size:1rem;font-weight:400"><span>Estimated cost</span><span>${money(v.totalCost)}</span></div>
       ${compareNote ? `<small class="note" style="display:block;color:var(--good);font-weight:600;margin-top:4px">${esc(compareNote)}</small>` : ""}
-      ${shortfallNote}
+      ${shortfallNote}${calShort}
       ${rows}
       ${skippedNote}
       <small class="note" style="display:block;margin-top:8px">Kroger's catalog shows what's carried at your store, not live shelf stock — confirm it's actually available when you get there. Quantities are estimates based on typical nutrition values, not the specific product's label.</small>
@@ -433,7 +467,7 @@ function renderProteinPlan(r, repriceFrom) {
       let streakNote = "";
       try {
         // Saves only the target and food names the user typed. No Kroger products or prices.
-        const s = await plansApi("record", { target: lastRequest?.target ?? r.targetProteinPerWeek, preferences: lastRequest?.preferences || [] });
+        const s = await plansApi("record", { goal: lastRequest?.goal || r.goal, target: lastRequest?.target || 0, calories: lastRequest?.calories || 0, preferences: lastRequest?.preferences || [] });
         renderPlanHome(s);
         if (s.streak > 0) streakNote = ` ${s.streak} week streak.`;
       } catch {}
@@ -459,10 +493,17 @@ async function loadPlanHome() {
 function howItWorks(extra) {
   return `<div class="card"><b>How it works</b>
     <ol class="ings" style="margin:8px 0 0">
-      <li>Set a weekly protein goal and rank the foods you like.</li>
+      <li>Pick a protein goal, a calorie goal, or both, and rank the foods you like.</li>
       <li>See the cheapest way to buy it at your Kroger and send it to your cart.</li>
       <li>Get a week of meal ideas made from those exact foods, so you never eat the same thing every day.</li>
     </ol>${extra || ""}</div>`;
+}
+
+function lastGoalLabel(l) {
+  const g = l.goal || "protein";
+  if (g === "calories") return `${l.calories} calories a day`;
+  if (g === "both") return `${l.target}g protein, ${l.calories} cal a day`;
+  return `${l.target}g protein`;
 }
 
 function renderPlanHome(s) {
@@ -485,14 +526,17 @@ function renderPlanHome(s) {
     </div>
     <div style="margin:8px 0 6px">${dots}</div>
     <small class="note" style="display:block">${esc(status)}</small>
-    <div class="total" style="font-size:1rem;font-weight:400;margin-top:10px"><span>Last plan, ${esc(fmtDate(s.last.sentAt))}</span><span>${esc(s.last.target)}g protein</span></div>
+    <div class="total" style="font-size:1rem;font-weight:400;margin-top:10px"><span>Last plan, ${esc(fmtDate(s.last.sentAt))}</span><span>${esc(lastGoalLabel(s.last))}</span></div>
     <small class="note" style="display:block">${s.last.preferences.map(esc).join(", ")}</small>
     <button class="btn primary block" id="rebuyLast">Rebuy my last plan</button>
     <small class="note" style="display:block;margin-top:6px">Rebuy uses the same target and foods with today's Kroger prices at your selected store. We don't save past prices.</small>
   </div>`;
   $("rebuyLast").onclick = () => {
-    $("proteinTarget").value = String(s.last.target);
-    store.set("proteinTarget", String(s.last.target));
+    goalType = s.last.goal || "protein";
+    store.set("goalType", goalType);
+    if (s.last.target) { $("proteinTarget").value = String(s.last.target); store.set("proteinTarget", String(s.last.target)); }
+    if (s.last.calories) { $("calorieTarget").value = String(s.last.calories); store.set("calorieTarget", String(s.last.calories)); }
+    renderGoalUI();
     prefs = s.last.preferences.slice();
     renderPrefRows();
     pendingReprice = s.last.sentAt;
@@ -611,7 +655,7 @@ function downloadList(l) {
 async function priceList(l) {
   setTab("build");
   const zip = $("storeZip").value.trim() || $("zip").value.trim();
-  if (!zip) { setTab("protein"); banner("err", "Add your ZIP code or pick your store on the Plan tab first, then get prices again."); $("storeZip").focus(); return; }
+  if (!zip) { setTab("protein"); banner("err", "Add your ZIP code or pick your store on the My goals tab first, then get prices again."); $("storeZip").focus(); return; }
   $("banner").innerHTML = "";
   parsed = { title: l.title, ingredients: l.ingredients, servings: l.servings, proteinPerServing: l.proteinPerServing };
   $("list").innerHTML = "<p>Looking up prices near you…</p>";
@@ -642,12 +686,20 @@ let meals = null; // { foods, days: [{ status, meals, dayProtein, error }] }
 const mealSettings = {
   perDay: [2, 3, 4].includes(Number(store.get("mealsPerDay"))) ? Number(store.get("mealsPerDay")) : 3,
   cook: ["quick", "normal", "cook"].includes(store.get("mealCook")) ? store.get("mealCook") : "normal",
+  focus: "protein",
 };
+const sumCal = (d) => d.meals.reduce((t, m) => t + (m.calories || 0), 0);
+const mealNut = (m, focus) => focus === "calories" ? `≈${m.calories} cal` : focus === "both" ? `≈${m.protein}g protein · ≈${m.calories} cal` : `≈${m.protein}g protein`;
+function dayNut(d, focus) {
+  const p = `≈${d.dayProtein}g protein${d.dailyTarget && d.dayProtein < d.dailyTarget * 0.9 ? ` of ${d.dailyTarget}g` : ""}`;
+  const c = `≈${d.dayCalories} cal${d.dailyCalorieTarget && d.dayCalories < d.dailyCalorieTarget * 0.9 ? ` of ${d.dailyCalorieTarget}` : ""}`;
+  return focus === "calories" ? c : focus === "both" ? `${p} · ${c}` : p;
+}
 
 async function mealApi(action, extra = {}) {
   const idToken = await user.getIdToken();
   return postJSON("/.netlify/functions/meal-ideas", {
-    idToken, action, foods: meals.foods, mealsPerDay: mealSettings.perDay, cookTime: mealSettings.cook, ...extra,
+    idToken, action, foods: meals.foods, goal: meals.focus || mealSettings.focus, mealsPerDay: mealSettings.perDay, cookTime: mealSettings.cook, ...extra,
   });
 }
 
@@ -655,7 +707,7 @@ function startMeals() {
   if (!user) return banner("err", "Sign in with the button at the top to get meal ideas.");
   if (!planFoods.length) return;
   $("banner").innerHTML = "";
-  meals = { foods: planFoods.slice(), days: Array.from({ length: 7 }, () => ({ status: "loading", meals: [] })) };
+  meals = { foods: planFoods.slice(), focus: mealSettings.focus, days: Array.from({ length: 7 }, () => ({ status: "loading", meals: [] })) };
   renderMeals();
   meals.days.forEach((_, i) => loadDay(i));
 }
@@ -666,7 +718,7 @@ async function loadDay(i) {
   try {
     const r = await mealApi("day", { dayIndex: i });
     if (meals !== gen) return;
-    d.meals = r.meals; d.dayProtein = r.dayProtein; d.dailyTarget = r.dailyTarget; d.status = "ok";
+    d.meals = r.meals; d.dayProtein = r.dayProtein; d.dailyTarget = r.dailyTarget; d.dayCalories = r.dayCalories; d.dailyCalorieTarget = r.dailyCalorieTarget; d.status = "ok";
   } catch (e) {
     if (meals !== gen) return;
     d.status = "error"; d.error = e.message || "Could not plan this day.";
@@ -699,7 +751,7 @@ async function swapMeal(di, mi) {
     const avoid = gen.days.flatMap((x) => x.meals.map((y) => y.title));
     const r = await mealApi("swap", { dayIndex: di, meal: { title: m.title, type: m.type, items: m.items.map((it) => ({ food: it.food, amount: it.amount })) }, avoid });
     if (meals !== gen) return;
-    d.meals[mi] = r.meals[0]; d.dayProtein = sumProtein(d);
+    d.meals[mi] = r.meals[0]; d.dayProtein = sumProtein(d); d.dayCalories = sumCal(d);
   } catch (e) { m.swapping = false; banner("err", e.message || "Could not swap that meal."); }
   if (meals === gen) renderMeals();
 }
@@ -734,13 +786,16 @@ function renderMealSettings() {
   const busy = meals && meals.days.some((d) => d.status === "loading");
   box.innerHTML = `<div class="card">
     <b>${meals ? "Your week of meals" : "Your plan is ready for meals"}</b>
+    <label style="margin-top:10px">Focus</label>
+    <div style="display:flex;gap:6px">${chip("Protein", "data-focus", "protein", mealSettings.focus === "protein")}${chip("Calories", "data-focus", "calories", mealSettings.focus === "calories")}${chip("Both", "data-focus", "both", mealSettings.focus === "both")}</div>
     <label style="margin-top:10px">Meals per day</label>
     <div style="display:flex;gap:6px">${chip("2", "data-perday", 2, mealSettings.perDay === 2)}${chip("3", "data-perday", 3, mealSettings.perDay === 3)}${chip("4", "data-perday", 4, mealSettings.perDay === 4)}</div>
-    <small class="note" style="display:block;margin-top:6px">Each meal stays around 50g of protein. If your plan needs more, snacks are added.</small>
+    <small class="note" style="display:block;margin-top:6px">${mealSettings.focus === "calories" ? "Each meal stays around 900 calories." : mealSettings.focus === "both" ? "Each meal stays around 50g of protein and 900 calories." : "Each meal stays around 50g of protein."} If your plan needs more, snacks are added.</small>
     <label style="margin-top:10px">Cooking time</label>
     <div style="display:flex;gap:6px">${chip("Quick", "data-cook", "quick", mealSettings.cook === "quick")}${chip("Normal", "data-cook", "normal", mealSettings.cook === "normal")}${chip("I like to cook", "data-cook", "cook", mealSettings.cook === "cook")}</div>
     <button class="btn primary block" id="makeMeals" ${busy || !planFoods.length ? "disabled" : ""}>${meals ? "Make new ideas" : "Make my week of meals"}</button>
   </div>`;
+  box.querySelectorAll("[data-focus]").forEach((b) => b.onclick = () => { mealSettings.focus = b.dataset.focus; renderMealSettings(); });
   box.querySelectorAll("[data-perday]").forEach((b) => b.onclick = () => { mealSettings.perDay = Number(b.dataset.perday); store.set("mealsPerDay", String(mealSettings.perDay)); renderMealSettings(); });
   box.querySelectorAll("[data-cook]").forEach((b) => b.onclick = () => { mealSettings.cook = b.dataset.cook; store.set("mealCook", mealSettings.cook); renderMealSettings(); });
   $("makeMeals").onclick = startMeals;
@@ -753,7 +808,7 @@ function mealCardHtml(di, mi, m) {
   return `<div class="card">
     <b>${esc(m.title)}</b>
     <small class="note" style="display:block">${esc(m.summary)}</small>
-    <small class="note" style="display:block;margin-top:4px">${m.type === "snack" ? "Snack · " : ""}≈${m.protein}g protein from your plan foods · ${m.minutes} min</small>
+    <small class="note" style="display:block;margin-top:4px">${m.type === "snack" ? "Snack · " : ""}${mealNut(m, meals.focus)} from your plan foods · ${m.minutes} min</small>
     <ul class="ings">${list}</ul>
     ${recipe}
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px">
@@ -771,14 +826,14 @@ function renderMeals() {
     box.innerHTML = planFoods.length
       ? `<div class="card empty"><p style="margin:0">Tap <b>Make my week of meals</b> above. You get meal ideas that use the exact foods in your plan, so you stop eating the same thing every day.</p></div>`
       : `<div class="card empty"><b>A week of meals from the foods you're buying</b>
-          <p style="margin-top:6px">Build a plan on the Plan tab first. Then come back here for meal ideas that use those exact foods, so you stop eating the same thing every day.</p>
-          <button class="btn primary" id="goPlanTab">Go to Plan</button></div>`;
+          <p style="margin-top:6px">Build a plan on the My goals tab first. Then come back here for meal ideas that use those exact foods, so you stop eating the same thing every day.</p>
+          <button class="btn primary" id="goPlanTab">Go to My goals</button></div>`;
     if ($("goPlanTab")) $("goPlanTab").onclick = () => setTab("protein");
     return;
   }
-  box.innerHTML = `<small class="note" style="display:block;margin-bottom:6px">Protein amounts are calculated from the exact amounts of your plan foods, not guessed by AI. Check cook times and safe internal temperatures for meat, poultry, pork and fish.</small>` +
+  box.innerHTML = `<small class="note" style="display:block;margin-bottom:6px">Protein and calorie amounts are calculated from the exact amounts of your plan foods, not guessed by AI. Check cook times and safe internal temperatures for meat, poultry, pork and fish.</small>` +
     meals.days.map((d, di) => {
-      const head = `<h3 style="margin:18px 0 6px;font-size:1.05rem">Day ${di + 1}${d.status === "ok" ? ` <small class="note" style="font-weight:400">≈${d.dayProtein}g protein${d.dailyTarget && d.dayProtein < d.dailyTarget * 0.9 ? ` of ${d.dailyTarget}g` : ""}</small>` : ""}</h3>`;
+      const head = `<h3 style="margin:18px 0 6px;font-size:1.05rem">Day ${di + 1}${d.status === "ok" ? ` <small class="note" style="font-weight:400">${dayNut(d, meals.focus)}</small>` : ""}</h3>`;
       if (d.status === "loading") return head + `<div class="card"><p class="note" style="margin:0">Planning day ${di + 1}…</p></div>`;
       if (d.status === "error") return head + `<div class="card"><p class="note" style="margin:0 0 8px">${esc(d.error)}</p><button class="btn ghost" data-retry="${di}">Try again</button></div>`;
       return head + d.meals.map((m, mi) => mealCardHtml(di, mi, m)).join("");
