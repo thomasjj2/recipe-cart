@@ -1,10 +1,11 @@
-// POST { idToken, action, foods, mealsPerDay, cookTime, ... } -> meal ideas built from the foods in the user's protein plan.
+// POST { idToken, action, foods, goal, mealsPerDay, cookTime, ... } -> meal ideas built from the foods in the user's protein plan.
 // Actions:
 //   "day"    { dayIndex }                -> { meals: [...], dayProtein, dailyTarget }  (meals may include snacks, type "snack")
 //   "swap"   { dayIndex, meal, avoid }   -> { meals: [oneMeal] }
 //   "detail" { meal }                    -> { ingredients: [{ name, qty }], steps: [...], servings, proteinPerServing }
 //
-// foods: [{ name, weeklyProtein }]  (the user's own food names and the protein grams the plan gives them)
+// foods: [{ name, weeklyProtein, weeklyCalories }]  (the user's own food names and what the plan gives them)
+// goal: "protein" (default), "calories", or "both". It decides which cap keeps a single meal from being stuffed.
 //
 // PRIVACY / DESIGN NOTES
 // - Only food names, amounts, and the cooking settings are sent to the model. No Kroger product, price,
@@ -29,29 +30,37 @@ const G_PER_OZ = 28.3495;
 // No single meal should carry more than about 50g of protein, and a snack about 30g. If the plan needs more
 // than the chosen number of meals can hold, up to 2 snack slots are added so the protein is spread out.
 const MEAL_CAP = 50, SNACK_CAP = 30, MAX_SNACKS = 2, CAP_TOLERANCE = 10;
+const CAL_MEAL_CAP = 900, CAL_SNACK_CAP = 400, CAL_TOLERANCE = 100;
 const BILLING = /credit balance|billing|purchase credits|plans & billing/i;
 const clean = (v, n) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
+
+const per = (f, key) => (f.isCount ? f.nutrition[key + "PerUnit"] : f.nutrition[key + "Per100g"]) ?? 0;
+const amountOf = (f, amount, key) => (f.isCount ? amount * per(f, key) : (amount / 100) * per(f, key));
+const proteinOf = (f, amount) => amountOf(f, amount, "protein");
+const caloriesOf = (f, amount) => amountOf(f, amount, "calories");
 
 function cleanFoods(input) {
   const out = [], seen = new Set();
   for (const f of Array.isArray(input) ? input.slice(0, 8) : []) {
     const name = clean(f?.name, 60);
-    const weekly = Number(f?.weeklyProtein);
     const nutrition = lookupProtein(name);
-    if (!name || !nutrition || !(weekly > 0) || weekly > 50000 || seen.has(name.toLowerCase())) continue;
-    seen.add(name.toLowerCase());
+    if (!name || !nutrition || seen.has(name.toLowerCase())) continue;
     const isCount = nutrition.unit === "count";
-    const weeklyAmount = isCount ? weekly / nutrition.proteinPerUnit : (weekly / nutrition.proteinPer100g) * 100;
+    const probe = { isCount, nutrition };
+    const wp = Number(f?.weeklyProtein), wc = Number(f?.weeklyCalories);
+    let weeklyAmount = 0;
+    if (wp > 0 && wp <= 50000 && per(probe, "protein") > 0) weeklyAmount = isCount ? wp / per(probe, "protein") : (wp / per(probe, "protein")) * 100;
+    else if (wc > 0 && wc <= 500000 && per(probe, "calories") > 0) weeklyAmount = isCount ? wc / per(probe, "calories") : (wc / per(probe, "calories")) * 100;
+    if (!(weeklyAmount > 0)) continue;
+    seen.add(name.toLowerCase());
     out.push({ name, isCount, nutrition, weeklyAmount });
   }
   return out;
 }
 
-const proteinOf = (f, amount) => (f.isCount ? amount * f.nutrition.proteinPerUnit : (amount / 100) * f.nutrition.proteinPer100g);
-
-// Turns one model-written meal into a safe, validated meal with protein computed from our own table.
-// Meals over the protein cap are scaled down so no single meal or snack is stuffed.
-function sanitizeMeal(m, foods) {
+// Turns one model-written meal into a safe, validated meal with protein and calories computed from our own table.
+// Meals over the cap for the chosen goal are scaled down so no single meal or snack is stuffed.
+function sanitizeMeal(m, foods, goal = "protein") {
   const byName = new Map(foods.map((f) => [f.name.toLowerCase(), f]));
   const merged = new Map();
   for (const it of Array.isArray(m?.items) ? m.items : []) {
@@ -61,9 +70,12 @@ function sanitizeMeal(m, foods) {
     merged.set(f.name, (merged.get(f.name) || 0) + amount);
   }
   const type = m?.type === "snack" ? "snack" : "meal";
-  const cap = type === "snack" ? SNACK_CAP : MEAL_CAP;
-  const rawProtein = [...merged].reduce((t, [name, amount]) => t + proteinOf(byName.get(name.toLowerCase()), amount), 0);
-  const scale = rawProtein > cap + CAP_TOLERANCE ? cap / rawProtein : 1;
+  const capP = type === "snack" ? SNACK_CAP : MEAL_CAP, capC = type === "snack" ? CAL_SNACK_CAP : CAL_MEAL_CAP;
+  let rawP = 0, rawC = 0;
+  for (const [name, amount] of merged) { const f = byName.get(name.toLowerCase()); rawP += proteinOf(f, amount); rawC += caloriesOf(f, amount); }
+  const scaleP = goal !== "calories" && rawP > capP + CAP_TOLERANCE ? capP / rawP : 1;
+  const scaleC = goal !== "protein" && rawC > capC + CAL_TOLERANCE ? capC / rawC : 1;
+  const scale = Math.min(scaleP, scaleC);
   const items = [];
   for (const [name, rawAmount] of merged) {
     const f = byName.get(name.toLowerCase());
@@ -71,7 +83,7 @@ function sanitizeMeal(m, foods) {
     const amount = f.isCount ? Math.min(30, Math.round(scaled * 2) / 2) : Math.min(2000, Math.round(scaled / 5) * 5);
     if (amount <= 0) continue;
     const qty = f.isCount ? String(amount) : `${amount} g (${(amount / G_PER_OZ).toFixed(1)} oz)`;
-    items.push({ food: name, amount, qty, label: f.isCount ? `${amount} ${name}` : `${qty} ${name}`, protein: Math.round(proteinOf(f, amount)) });
+    items.push({ food: name, amount, qty, label: f.isCount ? `${amount} ${name}` : `${qty} ${name}`, protein: Math.round(proteinOf(f, amount)), calories: Math.round(caloriesOf(f, amount)) });
   }
   if (!items.length) return null;
   const title = clean(m?.title, 80);
@@ -86,15 +98,20 @@ function sanitizeMeal(m, foods) {
     items,
     extras,
     protein: items.reduce((s, i) => s + i.protein, 0),
+    calories: items.reduce((s, i) => s + i.calories, 0),
   };
 }
 
-// How many meals and snacks a day needs so each stays under its protein cap.
-function slotPlan(foods, perDay) {
+// How many meals and snacks a day needs so each stays under its cap for the chosen goal.
+function slotPlan(foods, perDay, goal = "protein") {
   const daily = foods.reduce((t, f) => t + proteinOf(f, f.weeklyAmount / 7), 0);
+  const dailyCal = foods.reduce((t, f) => t + caloriesOf(f, f.weeklyAmount / 7), 0);
   let snacks = 0;
-  while (snacks < MAX_SNACKS && perDay * MEAL_CAP + snacks * SNACK_CAP < daily) snacks++;
-  return { meals: perDay, snacks, daily: Math.round(daily) };
+  while (snacks < MAX_SNACKS && (
+    (goal !== "calories" && perDay * MEAL_CAP + snacks * SNACK_CAP < daily) ||
+    (goal !== "protein" && perDay * CAL_MEAL_CAP + snacks * CAL_SNACK_CAP < dailyCal)
+  )) snacks++;
+  return { meals: perDay, snacks, daily: Math.round(daily), dailyCal: Math.round(dailyCal) };
 }
 
 async function askModel(system, user, maxTokens) {
@@ -114,7 +131,7 @@ async function askModel(system, user, maxTokens) {
 }
 
 const MEAL_SYSTEM = `You plan varied, realistic home cooked meals for one person. The person already bought specific protein foods, and your job is to spread them across meals so they never get bored. Rules:
-- Use ONLY the protein foods listed for protein. Never add other meat, fish, eggs, tofu, beans, lentils, protein powder, or dairy protein as a main ingredient.
+- Use ONLY the listed foods as main ingredients. They are protein foods and may also include staples like rice, pasta, oats, bread, potatoes, oil, or peanut butter. Never add other meat, fish, eggs, tofu, beans, lentils, protein powder, or dairy protein as a main ingredient.
 - Use roughly the listed amount of each food across the meals you write. Not every food has to be in every meal.
 - "extras" are simple, cheap, low protein staples (rice, pasta, bread, tortillas, potatoes, oats, fruit, vegetables, oil, sauces, spices). Keep each extra a short plain grocery term like "frozen broccoli". No more than 5 per meal.
 - "food" must be copied exactly from the list. "amount" is grams of that food as bought for weight foods, or a plain number for count foods like eggs.
@@ -149,13 +166,14 @@ exports.handler = async (event) => {
     catch { return res(401, { error: "Please sign in again." }); }
 
     const foods = cleanFoods(b.foods);
-    if (!foods.length) return res(400, { error: "Your plan has no foods with protein estimates to build meals from." });
+    if (!foods.length) return res(400, { error: "Your plan has no foods with nutrition estimates to build meals from." });
     const perDay = [2, 3, 4].includes(Number(b.mealsPerDay)) ? Number(b.mealsPerDay) : 3;
     const cook = COOK[b.cookTime] ? b.cookTime : "normal";
+    const goal = ["protein", "calories", "both"].includes(b.goal) ? b.goal : "protein";
 
     if (b.action === "day") {
       const i = Math.max(0, Math.min(6, Math.round(Number(b.dayIndex)) || 0));
-      const plan = slotPlan(foods, perDay);
+      const plan = slotPlan(foods, perDay, goal);
       const slots = `${plan.meals} meals${plan.snacks ? ` and ${plan.snacks} snack${plan.snacks > 1 ? "s" : ""}` : ""}`;
       const user = `Plan ${slots} for day ${i + 1} of 7.
 Style for the day: ${THEMES[i % THEMES.length]}.
@@ -163,13 +181,13 @@ ${COOK[cook]}
 Protein foods to spread across the day's meals:
 ${foodLines(foods)}`;
       const out = await askModel(MEAL_SYSTEM, user, 1400);
-      const meals = (Array.isArray(out.meals) ? out.meals : []).map((m) => sanitizeMeal(m, foods)).filter(Boolean).slice(0, plan.meals + plan.snacks);
+      const meals = (Array.isArray(out.meals) ? out.meals : []).map((m) => sanitizeMeal(m, foods, goal)).filter(Boolean).slice(0, plan.meals + plan.snacks);
       if (!meals.length) return res(502, { error: "Could not plan this day. Try again." });
-      return res(200, { meals, dayProtein: meals.reduce((s, m) => s + m.protein, 0), dailyTarget: plan.daily });
+      return res(200, { meals, dayProtein: meals.reduce((s, m) => s + m.protein, 0), dailyTarget: plan.daily, dayCalories: meals.reduce((s, m) => s + m.calories, 0), dailyCalorieTarget: plan.dailyCal });
     }
 
     if (b.action === "swap") {
-      const old = sanitizeMeal(b.meal, foods);
+      const old = sanitizeMeal(b.meal, foods, goal);
       if (!old) return res(400, { error: "Missing meal to swap" });
       const avoid = (Array.isArray(b.avoid) ? b.avoid : []).map((t) => clean(t, 80)).filter(Boolean).slice(0, 30);
       const theme = THEMES[Math.floor(Math.random() * THEMES.length)];
@@ -179,13 +197,13 @@ Use these protein foods in these exact amounts:
 ${old.items.map((it) => `- ${it.food}: ${it.amount}${foods.find((f) => f.name === it.food)?.isCount ? " (count)" : " g"}`).join("\n")}
 Do not reuse any of these meal titles: ${avoid.join("; ") || "none"}`;
       const out = await askModel(MEAL_SYSTEM, user, 500);
-      const meal = sanitizeMeal({ ...(Array.isArray(out.meals) ? out.meals : [])[0], type: old.type }, foods);
+      const meal = sanitizeMeal({ ...(Array.isArray(out.meals) ? out.meals : [])[0], type: old.type }, foods, goal);
       if (!meal) return res(502, { error: "Could not find a swap. Try again." });
       return res(200, { meals: [meal] });
     }
 
     if (b.action === "detail") {
-      const m = sanitizeMeal(b.meal, foods);
+      const m = sanitizeMeal(b.meal, foods, goal);
       if (!m) return res(400, { error: "Missing meal" });
       const user = `Meal: ${m.title}. ${m.summary}
 Protein foods and exact amounts:
@@ -198,7 +216,7 @@ Extras: ${m.extras.join(", ") || "none"}`;
       if (!steps.length) return res(502, { error: "Could not write that recipe. Try again." });
       // Every planned meal is written for one person, so servings is 1. The protein figure is the one we
       // calculated from our own table (plan foods only), never a number from the model.
-      return res(200, { ingredients, steps, servings: 1, proteinPerServing: m.protein });
+      return res(200, { ingredients, steps, servings: 1, proteinPerServing: m.protein, caloriesPerServing: m.calories });
     }
 
     return res(400, { error: "Unknown action" });

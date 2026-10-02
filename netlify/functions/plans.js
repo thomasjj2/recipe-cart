@@ -1,7 +1,8 @@
 // POST { idToken, action, tzOffset, ... } -> the signed-in user's weekly protein plan history.
 // Actions:
 //   "summary"                                -> { streak, sentThisWeek, dots, last, totalWeeks }
-//   "record" { target, preferences }         -> same shape as "summary", after saving this week's plan
+//   "record" { goal, target, calories, preferences } -> same shape as "summary", after saving this week's plan
+//   goal is "protein" (default, also for older saved weeks), "calories", or "both". calories is per day.
 // We store ONLY what the user typed: weekly protein target, the ranked food names, and when
 // they sent the plan. No Kroger product, price, size, or image data is ever saved here
 // (Kroger ToS Section 5e). Reordering re-runs the plan builder, so prices are always live.
@@ -47,7 +48,7 @@ async function summarize(col, currentMonday) {
     dots,
     totalWeeks: docs.length,
     last: latest
-      ? { weekKey: latest.weekKey, sentAt: latest.sentAt, target: latest.target, preferences: latest.preferences }
+      ? { weekKey: latest.weekKey, sentAt: latest.sentAt, goal: latest.goal || "protein", target: latest.target || 0, calories: latest.calories || 0, preferences: latest.preferences }
       : null,
   };
 }
@@ -76,16 +77,19 @@ exports.handler = async (event) => {
     }
 
     if (b.action === "record") {
-      const target = Math.round(Number(b.target));
+      const goal = ["protein", "calories", "both"].includes(b.goal) ? b.goal : "protein";
+      const target = Math.round(Number(b.target)) || 0;
+      const calories = Math.round(Number(b.calories)) || 0;
       const preferences = (Array.isArray(b.preferences) ? b.preferences : [])
         .map((p) => clean(p, 60))
         .filter(Boolean)
         .slice(0, MAX_ITEMS);
-      if (!target || target <= 0 || target > 100000) return res(400, { error: "Invalid protein target" });
+      if (goal !== "calories" && (target <= 0 || target > 100000)) return res(400, { error: "Invalid protein target" });
+      if (goal !== "protein" && (calories < 1200 || calories > 6000)) return res(400, { error: "Invalid calorie goal" });
       if (!preferences.length) return res(400, { error: "No protein sources to save" });
 
       const weekKey = keyOf(currentMonday);
-      await col.doc(weekKey).set({ weekKey, sentAt: now, target, preferences });
+      await col.doc(weekKey).set({ weekKey, sentAt: now, goal, target, calories, preferences });
       return res(200, await summarize(col, currentMonday));
     }
 

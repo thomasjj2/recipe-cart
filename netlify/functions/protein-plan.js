@@ -1,4 +1,5 @@
-// POST { targetProteinPerWeek, preferences: [string,...] ranked highest first, zip, locationId? }
+// POST { goal: "protein"|"calories"|"both", targetProteinPerWeek, targetCaloriesPerDay, preferences: [string,...] ranked highest first, zip, locationId? }
+// Calories goal derives a protein floor (25 percent of calories from protein). Both goals run protein first, then top up calories with the cheapest calories among the listed foods.
 // -> { locationId, targetProteinPerWeek, ranked: PLAN, cheapest: PLAN, comparison }
 //    where PLAN = { plan: [...], unmatched: [...], totalProteinEstimate, totalCost, shortfall }
 //
@@ -18,6 +19,8 @@ function parseSizeToLbs(size) {
   if (!size) return null;
   const s = String(size).toLowerCase();
   let lbs = 0, found = false;
+  const flMatch = s.match(/([\d.]+)\s*fl\s*oz/);
+  if (flMatch) { lbs += (parseFloat(flMatch[1]) * 0.95) / 16; found = true; }
   const lbMatch = s.match(/([\d.]+)\s*lb/);
   const ozMatch = s.match(/([\d.]+)\s*oz/);
   const kgMatch = s.match(/([\d.]+)\s*kg/);
@@ -35,18 +38,21 @@ function parseCount(size) {
   return null;
 }
 
-// How much protein is in ONE package of this product, per its actual unit type.
-function proteinPerPackage(nutrition, item) {
+// How much protein or calories is in ONE package of this product, per its actual unit type.
+function amountPerPackage(nutrition, item, metric) {
   if (!nutrition || !item) return null;
+  const cal = metric === "calories";
   if (nutrition.unit === "count") {
     const count = parseCount(item.size);
-    return count ? count * nutrition.proteinPerUnit : null;
+    const per = cal ? nutrition.caloriesPerUnit : nutrition.proteinPerUnit;
+    return count && per != null ? count * per : null;
   }
   const lbs = parseSizeToLbs(item.size);
-  if (!lbs) return null;
-  const grams = lbs * 453.592;
-  return (grams / 100) * nutrition.proteinPer100g;
+  const per = cal ? nutrition.caloriesPer100g : nutrition.proteinPer100g;
+  if (!lbs || per == null) return null;
+  return ((lbs * 453.592) / 100) * per;
 }
+const proteinPerPackage = (nutrition, item) => amountPerPackage(nutrition, item, "protein");
 
 const CHEAP_MAX_SHARE = 0.5;      // in cheapest mode no single food covers more than half the goal
 const LOW_CONF_MAX_SHARE = 0.3;   // shaky nutrition estimates (canned beans, lentils) get a smaller share
@@ -91,6 +97,7 @@ function buildRanked(entries, target) {
   let remaining = target;
   for (const e of entries) {
     if (remaining <= 0) break; // goal already met by earlier picks
+    if (e.nutrition && e.nutrition.proteinPer100g === 0) continue; // calorie only foods are added in the calorie top up
     const top = e.matches[0] || null;
     if (!top) { skipped.push({ rank: e.rank, name: e.name, reason: "not_carried" }); continue; }
 
@@ -129,6 +136,7 @@ function buildCheapest(entries, target) {
   for (const e of entries) {
     if (!e.matches.length) { skipped.push({ rank: e.rank, name: e.name, reason: "not_carried" }); continue; }
     if (!e.nutrition) { skipped.push({ rank: e.rank, name: e.name, reason: "no_estimate" }); continue; }
+    if (e.nutrition.proteinPer100g === 0) continue; // calorie only foods are added in the calorie top up
     const askedForPrepared = PREPARED.test(e.name);
     let best = null;
     for (const top of e.matches) {
@@ -170,12 +178,101 @@ function buildCheapest(entries, target) {
   return totals(plan, target, skipped);
 }
 
+const CAL_SHARE = 0.6; // no single food covers more than 60% of the calorie goal
+
+function annotate(plan) {
+  for (const p of plan) {
+    if (!p.packages) continue;
+    const cp = amountPerPackage(lookupProtein(p.name), { size: p.product?.size }, "calories");
+    p.caloriesFromThis = cp ? Math.round(p.packages * cp) : null;
+  }
+}
+
+function bestForCalories(e) {
+  const askedPrepared = PREPARED.test(e.name);
+  let best = null;
+  for (const top of e.matches) {
+    if (!askedPrepared && PREPARED.test(top.description || "")) continue;
+    const item = top.items?.[0];
+    const perCal = amountPerPackage(e.nutrition, item, "calories");
+    const product = toProduct(top, item);
+    const price = unitPrice(product);
+    if (!perCal || price == null || price <= 0) continue;
+    const cpc = price / perCal;
+    if (!best || cpc < best.cpc) best = { product, perCal, cpc };
+  }
+  return best;
+}
+
+// Adds the cheapest calories among the listed foods until the weekly calorie goal is covered.
+function topUpCalories(v, entries, calTarget) {
+  const cands = [];
+  for (const e of entries) {
+    if (!e.nutrition || !e.matches.length) continue;
+    const best = bestForCalories(e);
+    if (best) cands.push({ ...e, ...best });
+  }
+  cands.sort((a, b) => a.cpc - b.cpc);
+  let have = v.plan.reduce((s, p) => s + (p.caloriesFromThis || 0), 0);
+  for (const c of cands) {
+    if (have >= calTarget) break;
+    let line = v.plan.find((p) => p.packages && p.name === c.name && p.product?.upc === c.product.upc);
+    const already = line?.caloriesFromThis || 0;
+    const need = Math.min(calTarget - have, calTarget * CAL_SHARE - already);
+    if (need <= 0) continue;
+    const add = Math.max(1, Math.ceil(need / c.perCal));
+    if (line) line.packages += add;
+    else {
+      line = { rank: c.rank, name: c.name, product: c.product, packages: add, confidence: c.nutrition.confidence || null,
+        assumptionNote: c.nutrition.note || null, wasFallback: false, addedForCalories: true };
+      v.plan.push(line);
+    }
+    const pp = amountPerPackage(c.nutrition, { size: c.product.size }, "protein");
+    if (pp != null) line.proteinFromThis = Math.round(line.packages * pp);
+    line.caloriesFromThis = Math.round(line.packages * c.perCal);
+    line.costPer100gProtein = pp ? costPer100g(line.product, pp) : null;
+    have += add * c.perCal;
+  }
+}
+
+// Staples picked for protein (like rice) can overshoot calories. Drop the priciest package while both goals stay within 5 percent.
+function trimExtras(v, proteinTarget, calTarget) {
+  for (;;) {
+    const prot = v.plan.reduce((s, p) => s + (p.proteinFromThis || 0), 0);
+    const cal = v.plan.reduce((s, p) => s + (p.caloriesFromThis || 0), 0);
+    const opts = v.plan.filter((p) => {
+      if (!p.packages || !p.caloriesFromThis) return false;
+      const perCal = p.caloriesFromThis / p.packages, perProt = (p.proteinFromThis || 0) / p.packages;
+      return cal - perCal >= calTarget * 0.95 && prot - perProt >= proteinTarget * 0.95;
+    }).sort((a, b) => (unitPrice(b.product) ?? 0) - (unitPrice(a.product) ?? 0));
+    const p = opts[0];
+    if (!p) return;
+    const perCal = p.caloriesFromThis / p.packages, perProt = (p.proteinFromThis || 0) / p.packages;
+    p.packages -= 1;
+    p.caloriesFromThis = Math.round(perCal * p.packages);
+    p.proteinFromThis = Math.round(perProt * p.packages);
+    if (p.packages <= 0) v.plan.splice(v.plan.indexOf(p), 1);
+  }
+}
+
+function finalize(v, entries, proteinTarget, calTarget) {
+  annotate(v.plan);
+  if (calTarget) { topUpCalories(v, entries, calTarget); trimExtras(v, proteinTarget, calTarget); }
+  const t = totals(v.plan, proteinTarget, v.unmatched);
+  const cal = t.plan.reduce((s, p) => s + (p.caloriesFromThis || 0), 0);
+  return { ...t, totalCaloriesEstimate: Math.round(cal), calorieShortfall: calTarget ? Math.round(Math.max(0, calTarget - cal)) : 0 };
+}
+
 const signature = (p) => p.plan.map((x) => `${x.product?.upc}:${x.packages}`).sort().join("|");
 
 exports.handler = async (event) => {
   if (event.httpMethod !== "POST") return res(405, { error: "POST only" });
   let b; try { b = JSON.parse(event.body || "{}"); } catch { return res(400, { error: "Bad JSON" }); }
-  const target = Number(b.targetProteinPerWeek);
+  const goal = ["protein", "calories", "both"].includes(b.goal) ? b.goal : "protein";
+  const calPerDay = Math.round(Number(b.targetCaloriesPerDay));
+  const calTarget = goal === "protein" ? 0 : calPerDay * 7;
+  if (goal !== "protein" && !(calPerDay >= 1200 && calPerDay <= 6000)) return res(400, { error: "Enter a daily calorie goal between 1200 and 6000" });
+  const target = goal === "calories" ? Math.round(calTarget / 16) : Number(b.targetProteinPerWeek); // 25 percent of calories from protein, 4 calories per gram
   const preferences = Array.isArray(b.preferences) ? b.preferences.filter(Boolean).slice(0, 8) : [];
   if (!target || target <= 0) return res(400, { error: "Enter a weekly protein target in grams" });
   if (!preferences.length) return res(400, { error: "Add at least one preferred protein source" });
@@ -195,18 +292,20 @@ exports.handler = async (event) => {
       matches: await searchProducts(name, locationId),
     })));
 
-    const ranked = buildRanked(entries, target);
-    const cheapest = buildCheapest(entries, target);
+    const ranked = finalize(buildRanked(entries, target), entries, target, calTarget);
+    const cheapest = finalize(buildCheapest(entries, target), entries, target, calTarget);
 
     // Only call the cheapest plan "cheaper" when it also covers about the same amount of protein.
-    const comparable = cheapest.totalProteinEstimate >= ranked.totalProteinEstimate * 0.95;
+    const comparable = goal === "calories"
+      ? cheapest.totalCaloriesEstimate >= ranked.totalCaloriesEstimate * 0.95
+      : cheapest.totalProteinEstimate >= ranked.totalProteinEstimate * 0.95;
     const comparison = {
       same: signature(ranked) === signature(cheapest),
       comparable,
       savings: comparable ? round2(ranked.totalCost - cheapest.totalCost) : 0,
     };
 
-    return res(200, { locationId, targetProteinPerWeek: target, ranked, cheapest, comparison });
+    return res(200, { locationId, goal, targetProteinPerWeek: target, targetCaloriesPerDay: goal === "protein" ? 0 : calPerDay, ranked, cheapest, comparison });
   } catch (e) {
     return res(500, { error: e.message || "Could not build your protein plan" });
   }
