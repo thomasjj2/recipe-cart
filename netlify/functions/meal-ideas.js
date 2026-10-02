@@ -44,7 +44,7 @@ function cleanFoods(input) {
   for (const f of Array.isArray(input) ? input.slice(0, 8) : []) {
     const name = clean(f?.name, 60);
     const nutrition = lookupProtein(name);
-    if (!name || !nutrition || seen.has(name.toLowerCase())) continue;
+    if (!name || !nutrition || nutrition.cartOnly || seen.has(name.toLowerCase())) continue; // cart only produce never drives meal weighting
     const isCount = nutrition.unit === "count";
     const probe = { isCount, nutrition };
     const wp = Number(f?.weeklyProtein), wc = Number(f?.weeklyCalories);

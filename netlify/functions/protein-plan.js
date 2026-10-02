@@ -16,11 +16,16 @@
 //    20 lb bag of rice or a 48 oz bottle of oil can't blow past the goal. Smaller sizes of the same food are used instead.
 //  - spreadFoods (default true for calorie goals): the ranked plan spreads the calories down the WHOLE list,
 //    with the top foods getting bigger shares, instead of stopping once protein is covered by the first couple of foods.
+//  - Protein cap (option B): once the protein goal is met, protein dense foods (meat, fish, eggs, dairy) are not added
+//    again. The rest of the calories come from carbs and fats, which can carry their own small amount of protein.
+//    If the picks have too few carbs and fats, the plan stops short and says so, instead of overshooting protein.
+// CART ONLY FOODS (tomatoes, spinach and other low calorie produce): skipped by every protein and calorie step,
+//  then added at the end as one package each, so they are in the cart but never counted toward a goal.
 const { searchProducts, findNearestLocation } = require("./_kroger");
-const { lookupProtein } = require("./_nutrition");
+const { lookupProtein, PLANNING, calShareFor, isProteinDense } = require("./_nutrition");
 
 const LBS_PER_KG = 2.20462;
-const MAX_SHARE_PER_ITEM = 0.65; // no single food covers more than 65% of the goal, unless it's the last option left
+const MAX_SHARE_PER_ITEM = PLANNING.MAX_SHARE_PER_ITEM; // no single food covers more than 65% of the goal, unless it's the last option left
 
 function parseSizeToLbs(size) {
   if (!size) return null;
@@ -31,6 +36,20 @@ function parseSizeToLbs(size) {
   const lbMatch = s.match(/([\d.]+)\s*lb/);
   const ozMatch = s.match(/([\d.]+)\s*oz/);
   const kgMatch = s.match(/([\d.]+)\s*kg/);
+  // Volume sizes (milk, oil), converted to weight in pounds.
+  const fracGal = s.match(/(\d+)\s*\/\s*(\d+)\s*gal/);
+  const gal = s.match(/([\d.]+)\s*gal/);
+  const qt = s.match(/([\d.]+)\s*(?:qt|quart)/);
+  const pt = s.match(/([\d.]+)\s*(?:pt|pint)\b/);
+  const ml = s.match(/([\d.]+)\s*ml\b/);
+  const liter = s.match(/([\d.]+)\s*(?:l|liter|litre)\b/);
+  if (fracGal) { lbs += (parseInt(fracGal[1], 10) / parseInt(fracGal[2], 10)) * 8.6; found = true; }
+  else if (gal) { lbs += parseFloat(gal[1]) * 8.6; found = true; }
+  else if (/half\s*gal/.test(s)) { lbs += 4.3; found = true; }
+  if (qt) { lbs += parseFloat(qt[1]) * 2.15; found = true; }
+  if (pt) { lbs += parseFloat(pt[1]) * 1.07; found = true; }
+  if (ml) { lbs += parseFloat(ml[1]) * 0.0022; found = true; }
+  if (liter) { lbs += parseFloat(liter[1]) * 2.2; found = true; }
   if (lbMatch) { lbs += parseFloat(lbMatch[1]); found = true; }
   if (ozMatch) { lbs += parseFloat(ozMatch[1]) / 16; found = true; }
   if (kgMatch) { lbs += parseFloat(kgMatch[1]) * LBS_PER_KG; found = true; }
@@ -103,6 +122,7 @@ function buildRanked(entries, target, denseOnly = false) {
   const plan = [], skipped = [];
   let remaining = target;
   for (const e of entries) {
+    if (e.nutrition?.cartOnly) continue; // cart only produce is added at the end
     if (remaining <= 0) break; // goal already met by earlier picks (calorie goals keep going down the list in fillCalories)
     if (e.nutrition && e.nutrition.proteinPer100g === 0) continue; // calorie only foods are added in the calorie fill
     if (denseOnly && e.nutrition && !isProteinDense(e.nutrition)) continue; // carb staples are added in the calorie fill
@@ -142,6 +162,7 @@ function buildRanked(entries, target, denseOnly = false) {
 function buildCheapest(entries, target, denseOnly = false) {
   const candidates = [], skipped = [];
   for (const e of entries) {
+    if (e.nutrition?.cartOnly) continue; // cart only produce is added at the end
     if (!e.matches.length) { skipped.push({ rank: e.rank, name: e.name, reason: "not_carried" }); continue; }
     if (!e.nutrition) { skipped.push({ rank: e.rank, name: e.name, reason: "no_estimate" }); continue; }
     if (e.nutrition.proteinPer100g === 0) continue; // calorie only foods are added in the calorie fill
@@ -190,24 +211,13 @@ function buildCheapest(entries, target, denseOnly = false) {
 // ---- Calorie goals ----
 const CAL_CAP = 1.05;          // a plan never goes over 105% of the weekly calorie goal
 const CAL_FLOOR = 0.95;        // and counts as met at 95% or more
-const CAL_SHARE = 0.4;         // no single food covers more than 40% of the calorie goal
-const CAL_SHARE_DENSE = 0.2;   // oils and nut butters (500+ cal per 100g) cover at most 20%, nobody eats a week of oil
-const CAL_SHARE_LIGHT = 0.25;  // low calorie foods (under 150 cal per 100g, and eggs) cover at most 25%, so no 17 cans of beans
-const calShareFor = (n) => {
-  if (!n) return CAL_SHARE;
-  if (n.unit === "count") return CAL_SHARE_LIGHT;
-  const d = n.caloriesPer100g ?? 0;
-  return d >= 500 ? CAL_SHARE_DENSE : d < 150 ? CAL_SHARE_LIGHT : CAL_SHARE;
-};
-// On a calorie goal the protein step only uses real protein foods (20%+ of their calories from protein).
-// Carb staples like rice, pasta and oats are left to the calorie fill, so they can't "cover" the protein floor.
-const PROTEIN_DENSE = 0.2;
-const isProteinDense = (n) => {
-  const p = n.unit === "count" ? n.proteinPerUnit : n.proteinPer100g;
-  const c = n.unit === "count" ? n.caloriesPerUnit : n.caloriesPer100g;
-  return !!c && (p * 4) / c >= PROTEIN_DENSE;
-};
+// Option B setting. 1 = once the protein goal is met, protein dense foods stop being added (strict). Raise it, for example
+// to 1.3, to let them top up calories up to 130% of the protein goal when the picks have too few carbs and fats.
+const PROTEIN_CEILING = 1;
+// Per food calorie shares (calShareFor) and the protein dense test (isProteinDense) live in _nutrition.js,
+// so the app's feasibility meter uses exactly the same rules.
 const planCalories = (plan) => plan.reduce((s, p) => s + (p.caloriesFromThis || 0), 0);
+const planProtein = (plan) => plan.reduce((s, p) => s + (p.proteinFromThis || 0), 0);
 
 function annotate(plan) {
   for (const p of plan) {
@@ -251,12 +261,14 @@ function minCostPerCalorie(e) {
 // Adds calories until the weekly goal is covered, never past the cap.
 //  cheap  = go through foods from the lowest price per calorie up. Otherwise go down the user's ranking.
 //  spread = (ranked only) first give EVERY listed food a rank weighted share of the goal, so the whole list is used.
-function fillCalories(v, entries, calTarget, cheap, spread) {
+function fillCalories(v, entries, calTarget, cheap, spread, proteinTarget) {
   const cap = calTarget * CAL_CAP, floor = calTarget * CAL_FLOOR;
-  const cands = entries.filter((e) => e.nutrition && e.matches.length);
+  const cands = entries.filter((e) => e.nutrition && !e.nutrition.cartOnly && e.matches.length);
   if (cheap) cands.sort((a, b) => minCostPerCalorie(a) - minCostPerCalorie(b));
 
   const fill = (e, want) => {
+    // Option B: protein dense foods are bought for protein only. Once that goal is met, calories come from carbs and fats.
+    if (isProteinDense(e.nutrition) && planProtein(v.plan) >= proteinTarget * PROTEIN_CEILING) return;
     let line = v.plan.find((p) => p.packages && p.name === e.name);
     const already = line?.caloriesFromThis || 0;
     const room = Math.min(cap - planCalories(v.plan), calShareFor(e.nutrition) * calTarget - already);
@@ -346,15 +358,37 @@ function enforceCap(v, calTarget) {
   }
 }
 
+// One package of each cart only food (low calorie produce). Not counted toward any goal.
+function addCartOnly(v, entries, cheap) {
+  for (const e of entries) {
+    if (!e.nutrition?.cartOnly) continue;
+    if (!e.matches.length) { v.unmatched.push({ rank: e.rank, name: e.name, reason: "not_carried" }); continue; }
+    const askedPrepared = PREPARED.test(e.name);
+    let pick = null;
+    for (const top of e.matches) {
+      if (!askedPrepared && PREPARED.test(top.description || "")) continue;
+      const product = toProduct(top, top.items?.[0]);
+      const price = unitPrice(product);
+      if (!pick) pick = { product, price };
+      if (!cheap) break;
+      if (price != null && price > 0 && (pick.price == null || price < pick.price)) pick = { product, price };
+    }
+    if (!pick) continue;
+    v.plan.push({ rank: e.rank, name: e.name, product: pick.product, packages: 1, proteinFromThis: 0, caloriesFromThis: 0,
+      cartOnly: true, confidence: null, assumptionNote: null, wasFallback: false });
+  }
+}
+
 function finalize(v, entries, proteinTarget, calTarget, cheap = false, spread = false) {
   annotate(v.plan);
   if (calTarget) {
     enforceCap(v, calTarget);                          // protein picks alone shouldn't already be over the cap
-    fillCalories(v, entries, calTarget, cheap, spread);
+    fillCalories(v, entries, calTarget, cheap, spread, proteinTarget);
     trimExtras(v, proteinTarget, calTarget);
     enforceCap(v, calTarget);                          // safety net
     if (!cheap) v.plan.sort((a, b) => a.rank - b.rank); // ranked plan reads in the user's order
   }
+  addCartOnly(v, entries, cheap);
   const t = totals(v.plan, proteinTarget, v.unmatched);
   const cal = planCalories(t.plan);
   return {
