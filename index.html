@@ -112,6 +112,7 @@ footer a{color:var(--mute)}
       <label for="calorieTarget" style="margin-top:14px">Daily calorie goal</label>
       <input id="calorieTarget" type="text" inputmode="numeric" placeholder="2200">
       <small class="note" id="calHint" style="display:block;margin-top:4px"></small>
+      <label style="display:flex;gap:8px;align-items:center;margin-top:10px;font-weight:400"><input type="checkbox" id="spreadFoods" style="width:auto;margin:0"> Use every food on my list (top foods get bigger shares)</label>
     </div>
     <label id="foodsLabel" style="margin-top:14px">Your preferred protein sources, best first</label>
     <small class="note" id="foodsHint" style="display:block;margin-bottom:6px" hidden>Include staples like rice, pasta, oats, potatoes, bread, or olive oil so the plan can reach your calories.</small>
@@ -168,6 +169,8 @@ $("proteinTarget").value = store.get("proteinTarget") || "";
 $("proteinTarget").addEventListener("input", () => store.set("proteinTarget", $("proteinTarget").value.trim()));
 $("calorieTarget").value = store.get("calorieTarget") || "";
 $("calorieTarget").addEventListener("input", () => store.set("calorieTarget", $("calorieTarget").value.trim()));
+$("spreadFoods").checked = store.get("spreadFoods") !== "0";
+$("spreadFoods").addEventListener("change", () => store.set("spreadFoods", $("spreadFoods").checked ? "1" : "0"));
 let goalType = ["protein", "calories", "both"].includes(store.get("goalType")) ? store.get("goalType") : "protein";
 function renderGoalUI() {
   $("goalChips").innerHTML = [["protein", "Protein"], ["calories", "Calories"], ["both", "Both"]].map(([k, l]) => chip(l, "data-goal", k, goalType === k)).join("");
@@ -361,6 +364,7 @@ $("goProtein").onclick = async () => {
   try {
     const r = await postJSON("/.netlify/functions/protein-plan", {
       goal: goalType, targetProteinPerWeek: target, targetCaloriesPerDay: calories, preferences, zip,
+      spreadFoods: $("spreadFoods").checked,
       locationId: selectedStore?.locationId || null,
     });
     renderProteinPlan(r, repriceFrom);
