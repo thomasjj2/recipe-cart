@@ -44,6 +44,22 @@ small.note{color:var(--mute)}
 .prefrow{display:flex;gap:6px;align-items:center;margin-bottom:6px}
 .prefrow input{flex:1;padding:10px;border:1.5px solid var(--line);border-radius:8px;font:inherit}
 .prefrow .rank{width:22px;text-align:center;font-weight:700;color:var(--mute);flex-shrink:0}
+.cattabs{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;margin:4px 0 8px;-webkit-overflow-scrolling:touch}
+.cattab{flex-shrink:0;min-height:40px;padding:8px 12px;border:1.5px solid var(--line);border-radius:999px;background:#fff;font:inherit;font-weight:600;color:var(--mute);cursor:pointer}
+.cattab[aria-pressed=true]{background:var(--ink);border-color:var(--ink);color:#fff}
+.cattab .cnt{display:inline-block;min-width:18px;margin-left:4px;padding:0 5px;border-radius:9px;background:var(--accent);color:#fff;font-size:.75rem;line-height:18px}
+.foodgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.tile{position:relative;display:flex;flex-direction:column;align-items:flex-start;gap:2px;min-height:84px;padding:10px;border:1.5px solid var(--line);border-radius:10px;background:#fff;font:inherit;text-align:left;cursor:pointer;color:var(--ink)}
+.tile .em{font-size:1.5rem;line-height:1.1}
+.tile b{font-size:.92rem;line-height:1.2;padding-right:22px}
+.tile small{color:var(--mute);font-size:.75rem;line-height:1.25}
+.tile.on{border-color:var(--accent);background:#fdf1e7}
+.tile .n{position:absolute;top:6px;right:6px;min-width:24px;height:24px;padding:0 6px;border-radius:12px;background:var(--accent);color:#fff;font-size:.8rem;font-weight:700;display:flex;align-items:center;justify-content:center}
+.pickname{flex:1;min-width:0;font-weight:600}
+.meter{padding:10px 12px;border-radius:8px;margin:10px 0;font-size:.9rem}
+.meter.good{background:#e8f3ea;color:var(--good)}
+.meter.warn{background:#fdf3d9;color:#8a6416}
+.meter.bad{background:#fbe9e4;color:var(--bad)}
 .iconbtn{min-height:38px;min-width:38px;border:1.5px solid var(--line);background:#fff;border-radius:7px;cursor:pointer;font-size:1rem;flex-shrink:0}
 .storeopt{border:1.5px solid var(--line);border-radius:8px;padding:10px;margin-top:6px;cursor:pointer}
 .storeopt.selected{border-color:var(--accent);background:#fdf1e7}
@@ -114,10 +130,20 @@ footer a{color:var(--mute)}
       <small class="note" id="calHint" style="display:block;margin-top:4px"></small>
       <label style="display:flex;gap:8px;align-items:center;margin-top:10px;font-weight:400"><input type="checkbox" id="spreadFoods" style="width:auto;margin:0"> Use every food on my list (top foods get bigger shares)</label>
     </div>
-    <label id="foodsLabel" style="margin-top:14px">Your preferred protein sources, best first</label>
-    <small class="note" id="foodsHint" style="display:block;margin-bottom:6px" hidden>Include staples like rice, pasta, oats, potatoes, bread, or olive oil so the plan can reach your calories.</small>
+    <label id="foodsLabel" style="margin-top:14px">Pick your foods</label>
+    <small class="note" id="foodsHint" style="display:block;margin-bottom:6px"></small>
+    <div id="catTabs" class="cattabs"></div>
+    <div id="foodGrid" class="foodgrid"></div>
+    <small class="note" id="pickMsg" role="status" style="display:block;color:var(--bad)"></small>
+    <div id="meter" class="meter" hidden></div>
+    <label id="picksLabel" style="margin-top:14px" hidden>Your picks, ranked (#1 gets the biggest share)</label>
     <div id="prefRows"></div>
-    <button class="btn ghost" id="addPref" style="margin-top:6px">+ Add another</button>
+    <label for="customFood" style="margin-top:14px">Don't see it? Add your own</label>
+    <div style="display:flex;gap:8px">
+      <input id="customFood" type="text" maxlength="60" placeholder="e.g. turkey bacon" style="flex:1">
+      <button class="btn ghost" id="addCustom" style="flex-shrink:0">Add</button>
+    </div>
+    <small class="note" style="display:block;margin-top:4px">Typed foods are estimates, and we may leave out ones we don't recognize.</small>
     <button class="btn primary block" id="goProtein" style="margin-top:14px">Build my plan</button>
   </div>
   <div id="proteinResults"></div>
@@ -166,56 +192,192 @@ const store = {
 $("zip").value = store.get("zip") || "";
 $("zip").addEventListener("input", () => store.set("zip", $("zip").value.trim()));
 $("proteinTarget").value = store.get("proteinTarget") || "";
-$("proteinTarget").addEventListener("input", () => store.set("proteinTarget", $("proteinTarget").value.trim()));
+$("proteinTarget").addEventListener("input", () => { store.set("proteinTarget", $("proteinTarget").value.trim()); renderMeter(); });
 $("calorieTarget").value = store.get("calorieTarget") || "";
-$("calorieTarget").addEventListener("input", () => store.set("calorieTarget", $("calorieTarget").value.trim()));
+$("calorieTarget").addEventListener("input", () => { store.set("calorieTarget", $("calorieTarget").value.trim()); renderMeter(); });
 $("spreadFoods").checked = store.get("spreadFoods") !== "0";
 $("spreadFoods").addEventListener("change", () => store.set("spreadFoods", $("spreadFoods").checked ? "1" : "0"));
+let pickerReady = false, catalog = null, catalogError = false, activeCat = null;
 let goalType = ["protein", "calories", "both"].includes(store.get("goalType")) ? store.get("goalType") : "protein";
 function renderGoalUI() {
   $("goalChips").innerHTML = [["protein", "Protein"], ["calories", "Calories"], ["both", "Both"]].map(([k, l]) => chip(l, "data-goal", k, goalType === k)).join("");
-  $("goalChips").querySelectorAll("[data-goal]").forEach((b) => b.onclick = () => { goalType = b.dataset.goal; store.set("goalType", goalType); renderGoalUI(); });
+  $("goalChips").querySelectorAll("[data-goal]").forEach((b) => b.onclick = () => { goalType = b.dataset.goal; store.set("goalType", goalType); activeCat = null; renderGoalUI(); });
   $("proteinWrap").hidden = goalType === "calories";
   $("calWrap").hidden = goalType === "protein";
   $("calHint").textContent = goalType === "calories" ? "We also make sure about a quarter of your calories come from protein." : "Estimates, not medical advice.";
-  $("foodsLabel").textContent = goalType === "protein" ? "Your preferred protein sources, best first" : "Foods you eat, best first";
-  $("foodsHint").hidden = goalType === "protein";
+  $("foodsLabel").textContent = goalType === "protein" ? "Pick your protein foods" : "Pick your foods";
+  $("foodsHint").textContent = goalType === "protein"
+    ? "Tap foods in the order you prefer them. Your first pick gets the biggest share. Up to 8 foods."
+    : "Pick carbs and fats as well as protein so the plan can reach your calories. Up to 8 foods.";
+  if (pickerReady) renderPrefRows();
 }
 renderGoalUI();
 
 // Preferences are stored as a JSON array so they can be reordered.
+const MAX_PICKS = 8; // the planner reads at most 8 foods
+const cleanPrefs = (arr) => {
+  const seen = new Set(), out = [];
+  for (const p of Array.isArray(arr) ? arr : []) {
+    const t = String(p ?? "").replace(/\s+/g, " ").trim().slice(0, 60);
+    if (t && !seen.has(t.toLowerCase())) { seen.add(t.toLowerCase()); out.push(t); }
+  }
+  return out.slice(0, MAX_PICKS);
+};
 let prefs = [];
-try { prefs = JSON.parse(store.get("proteinPrefsList") || "[]"); } catch { prefs = []; }
-if (!prefs.length) prefs = [""];
+try { prefs = cleanPrefs(JSON.parse(store.get("proteinPrefsList") || "[]")); } catch { prefs = []; }
 let selectedStore = null;
 try { selectedStore = JSON.parse(store.get("selectedStore") || "null"); } catch { selectedStore = null; }
 $("storeZip").value = store.get("zip") || "";
 
-function renderPrefRows() {
-  $("prefRows").innerHTML = prefs.map((val, i) => `
+// ---- Food picker: tap cards, tap order is the ranking ----
+// Cards come from /.netlify/functions/food-catalog (built from _nutrition.js). The picker still produces the same
+// `prefs` array of strings, so the plan request is unchanged. Typed foods that are not cards show as custom chips.
+const CAT_ORDER = {
+  protein: ["Proteins", "Dairy", "Produce", "Carbs", "Snacks", "Fats"],
+  calories: ["Carbs", "Fats", "Proteins", "Dairy", "Snacks", "Produce"],
+};
+CAT_ORDER.both = CAT_ORDER.calories;
+const cardOf = (name) => catalog?.foods.find((c) => c.searchTerm.toLowerCase() === String(name).toLowerCase()) || null;
+const num = (n) => (Math.round(n * 10) / 10).toString();
+function savePrefs() { store.set("proteinPrefsList", JSON.stringify(prefs)); }
+
+function renderCatTabs() {
+  const box = $("catTabs");
+  if (!catalog) { box.innerHTML = ""; return; }
+  const order = CAT_ORDER[goalType];
+  if (!activeCat || !order.includes(activeCat)) activeCat = order[0];
+  box.innerHTML = order.map((c) => {
+    const n = prefs.filter((p) => cardOf(p)?.category === c).length;
+    return `<button class="cattab" data-cat="${c}" aria-pressed="${activeCat === c}">${c}${n ? ` <span class="cnt">${n}</span>` : ""}</button>`;
+  }).join("");
+}
+
+function renderGrid() {
+  const box = $("foodGrid");
+  if (catalogError) { box.innerHTML = `<p class="note" style="grid-column:1/-1;margin:4px 0">The food menu could not load. You can still add foods by typing them below.</p>`; return; }
+  if (!catalog) { box.innerHTML = `<p class="note" style="grid-column:1/-1;margin:4px 0">Loading foods...</p>`; return; }
+  box.innerHTML = catalog.foods.filter((c) => c.category === activeCat).map((c) => {
+    const rank = prefs.findIndex((p) => p.toLowerCase() === c.searchTerm.toLowerCase()) + 1;
+    const count = c.unit === "count";
+    const facts = c.cartOnly ? "Goes in your cart only"
+      : `${num(count ? c.proteinPerUnit : c.proteinPer100g)}g protein · ${num(count ? c.caloriesPerUnit : c.caloriesPer100g)} cal ${count ? "each" : "per 100g"}`;
+    return `<button class="tile ${rank ? "on" : ""}" data-pick="${esc(c.searchTerm)}" aria-pressed="${!!rank}">
+      ${rank ? `<span class="n" aria-label="Pick number ${rank}">${rank}</span>` : ""}<span class="em" aria-hidden="true">${c.emoji}</span><b>${esc(c.searchTerm)}</b><small>${facts}</small></button>`;
+  }).join("");
+}
+
+function renderPickRows() {
+  $("picksLabel").hidden = !prefs.length;
+  $("prefRows").innerHTML = prefs.map((val, i) => {
+    const c = cardOf(val);
+    return `
     <div class="prefrow">
       <span class="rank">${i + 1}</span>
-      <input type="text" value="${esc(val)}" data-i="${i}" placeholder="e.g. rotisserie chicken">
+      <div class="pickname">${c ? `<span aria-hidden="true">${c.emoji}</span> ${esc(val)}` : `${esc(val)} <span class="badge moderate">Custom, estimate</span>`}</div>
       <button class="iconbtn" data-up="${i}" ${i === 0 ? "disabled" : ""} aria-label="Move up">↑</button>
       <button class="iconbtn" data-down="${i}" ${i === prefs.length - 1 ? "disabled" : ""} aria-label="Move down">↓</button>
       <button class="iconbtn" data-remove="${i}" aria-label="Remove">×</button>
-    </div>`).join("");
-  savePrefs();
+    </div>`;
+  }).join("");
 }
-function savePrefs() { store.set("proteinPrefsList", JSON.stringify(prefs)); }
-renderPrefRows();
 
-$("prefRows").addEventListener("input", (ev) => {
-  const i = ev.target.dataset.i;
-  if (i != null) { prefs[i] = ev.target.value; savePrefs(); }
+// Live estimate of how far the current picks can get, using the same share rules as the planner.
+// It ignores package sizes and prices, so it says "about". Custom foods are not counted.
+function renderMeter() {
+  const box = $("meter");
+  if (!catalog || !prefs.length) { box.hidden = true; return; }
+  const pl = catalog.planning;
+  const P0 = Number($("proteinTarget").value.trim()), cal = Number($("calorieTarget").value.trim());
+  const pPer = (n) => (n.unit === "count" ? n.proteinPerUnit : n.proteinPer100g);
+  const cPer = (n) => (n.unit === "count" ? n.caloriesPerUnit : n.caloriesPer100g);
+  const dense = (n) => !!cPer(n) && (pPer(n) * 4) / cPer(n) >= pl.PROTEIN_DENSE;
+  const share = (n) => (n.unit === "count" ? pl.CAL_SHARE_LIGHT : n.caloriesPer100g >= 500 ? pl.CAL_SHARE_DENSE : n.caloriesPer100g < 150 ? pl.CAL_SHARE_LIGHT : pl.CAL_SHARE);
+  const known = prefs.map(cardOf).filter((c) => c && !c.cartOnly);
+  const lines = []; let tone = "good";
+  if (goalType === "protein") {
+    if (!(P0 > 0)) { box.hidden = true; return; }
+    const n = known.filter((c) => pPer(c) > 0).length;
+    const pct = Math.round(Math.min(1, n * pl.MAX_SHARE_PER_ITEM) * 100);
+    lines.push(`Your picks can reach about ${pct}% of your protein goal.`);
+    if (pct < 95) { tone = pct < 70 ? "bad" : "warn"; lines.push("Pick another protein food to cover the rest."); }
+  } else {
+    if (!(cal >= 1200 && cal <= 6000)) { box.hidden = true; return; }
+    if (goalType === "both" && !(P0 > 0)) { box.hidden = true; return; }
+    const calW = cal * 7, Pw = goalType === "calories" ? calW / 16 : P0;
+    let left = Pw, calReach = 0, protReach = 0;
+    for (const c of known) {
+      if (dense(c)) { // bought for protein: covers protein up to its share, and only the calories that come with it
+        const take = Math.min(left, pl.MAX_SHARE_PER_ITEM * Pw);
+        left -= take; protReach += take; calReach += take * (cPer(c) / pPer(c));
+      } else { // carbs and fats fill calories up to their share
+        const cc = share(c) * calW;
+        calReach += cc; protReach += cc * (pPer(c) / cPer(c));
+      }
+    }
+    const pct = Math.round(Math.min(1, calReach / calW) * 100);
+    lines.push(`Your picks can reach about ${pct}% of your calorie goal.`);
+    if (pct < 95) {
+      tone = pct < 70 ? "bad" : "warn";
+      const hasCarb = known.some((c) => c.category === "Carbs"), hasFat = known.some((c) => c.category === "Fats");
+      lines.push("Add " + (!hasCarb && !hasFat ? "a carb like rice or oats and a fat like olive oil" : !hasCarb ? "a carb like rice, pasta, or oats" : !hasFat ? "a fat like olive oil or peanut butter" : "another carb or fat") + " to close the gap.");
+    }
+    if (goalType === "both" && Pw > 0 && protReach < Pw * 0.95) {
+      if (tone === "good") tone = "warn";
+      lines.push(`They cover about ${Math.round((protReach / Pw) * 100)}% of your protein goal, so add another protein food.`);
+    }
+  }
+  if (prefs.some((p) => !cardOf(p))) lines.push("Custom foods are not counted in this estimate.");
+  box.className = "meter " + tone;
+  box.innerHTML = lines.map((l) => `<div>${esc(l)}</div>`).join("");
+  box.hidden = false;
+}
+
+// Refreshes the whole picker. The old code called this after every list change, so it stays the single entry point.
+function renderPrefRows() {
+  renderCatTabs(); renderGrid(); renderPickRows(); renderMeter(); savePrefs();
+}
+
+function addPick(name) {
+  const t = String(name).replace(/\s+/g, " ").trim().slice(0, 60);
+  if (!t) return false;
+  if (prefs.some((p) => p.toLowerCase() === t.toLowerCase())) { $("pickMsg").textContent = "That food is already on your list."; return false; }
+  if (prefs.length >= MAX_PICKS) { $("pickMsg").textContent = `You can pick up to ${MAX_PICKS} foods. Remove one first.`; return false; }
+  prefs.push(t); $("pickMsg").textContent = "";
+  return true;
+}
+
+$("foodGrid").addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-pick]");
+  if (!b) return;
+  const name = b.dataset.pick, i = prefs.findIndex((p) => p.toLowerCase() === name.toLowerCase());
+  if (i >= 0) { prefs.splice(i, 1); $("pickMsg").textContent = ""; renderPrefRows(); }
+  else if (addPick(name)) renderPrefRows();
+});
+$("catTabs").addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-cat]");
+  if (b) { activeCat = b.dataset.cat; renderCatTabs(); renderGrid(); }
 });
 $("prefRows").addEventListener("click", (ev) => {
   const up = ev.target.dataset.up, down = ev.target.dataset.down, rm = ev.target.dataset.remove;
   if (up != null) { const i = Number(up); [prefs[i - 1], prefs[i]] = [prefs[i], prefs[i - 1]]; renderPrefRows(); }
   if (down != null) { const i = Number(down); [prefs[i + 1], prefs[i]] = [prefs[i], prefs[i + 1]]; renderPrefRows(); }
-  if (rm != null) { prefs.splice(Number(rm), 1); if (!prefs.length) prefs = [""]; renderPrefRows(); }
+  if (rm != null) { prefs.splice(Number(rm), 1); $("pickMsg").textContent = ""; renderPrefRows(); }
 });
-$("addPref").onclick = () => { prefs.push(""); renderPrefRows(); };
+function addCustom() { if (addPick($("customFood").value)) { $("customFood").value = ""; renderPrefRows(); } }
+$("addCustom").onclick = addCustom;
+$("customFood").addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); addCustom(); } });
+
+async function loadCatalog() {
+  try {
+    const r = await fetch("/.netlify/functions/food-catalog");
+    if (!r.ok) throw new Error("catalog");
+    catalog = await r.json();
+  } catch { catalogError = true; }
+  renderPrefRows();
+}
+pickerReady = true;
+renderPrefRows();
+loadCatalog();
 
 // ---- Store selection ----
 function renderStorePicker(stores) {
@@ -355,7 +517,8 @@ $("goProtein").onclick = async () => {
   const zip = $("storeZip").value.trim();
   if (goalType !== "calories" && (!target || target <= 0)) return banner("err", "Enter a weekly protein target in grams.");
   if (goalType !== "protein" && !(calories >= 1200 && calories <= 6000)) return banner("err", "Enter a daily calorie goal between 1200 and 6000.");
-  if (!preferences.length) return banner("err", goalType === "protein" ? "Add at least one protein source." : "Add at least one food.");
+  if (!preferences.length) return banner("err", goalType === "protein" ? "Pick at least one protein food." : "Pick at least one food.");
+  if (catalog && preferences.every((p) => cardOf(p)?.cartOnly)) return banner("err", "Pick at least one protein, carb, or fat. Produce goes in your cart but can't reach a goal.");
   if (!selectedStore && !zip) return banner("err", "Pick your store, or enter a ZIP code.");
   $("banner").innerHTML = "";
   $("goProtein").disabled = true;
@@ -389,7 +552,7 @@ function renderProteinPlan(r, repriceFrom) {
     const confBadge = p.confidence === "low" ? `<span class="badge low">Rough estimate</span>`
       : p.confidence === "moderate" ? `<span class="badge moderate">Estimate</span>` : "";
     const valueBit = p.costPer100gProtein != null ? ` · ${money(p.costPer100gProtein)} per 100g protein` : "";
-    const qtyLine = p.packages
+    const qtyLine = p.cartOnly ? "1 package in your cart, not counted toward your goals" : p.packages
       ? `${p.packages} package${p.packages === 1 ? "" : "s"} · ≈${p.proteinFromThis ?? 0}g protein${p.caloriesFromThis ? ` · ≈${p.caloriesFromThis} cal` : ""}${valueBit}${confBadge}`
       : (p.note || "Couldn't estimate a quantity for this item.");
     return `${fallbackNote}
@@ -411,7 +574,7 @@ function renderProteinPlan(r, repriceFrom) {
     : "";
 
   const calShort = v.calorieShortfall > 0
-    ? `<div class="fallbacknote">This plan is about ${Math.round(v.calorieShortfall / 7)} calories per day short. Add foods like rice, pasta, oats, or oil to your list to close the gap.</div>` : "";
+    ? `<div class="fallbacknote">This plan is about ${Math.round(v.calorieShortfall / 7)} calories per day short. Pick more carbs or fats (rice, oats, olive oil) to close the gap.</div>` : "";
   const proteinRow = r.goal === "calories"
     ? `<div class="total" style="font-size:1rem;font-weight:400"><span>Protein</span><span>≈${Math.round(v.totalProteinEstimate / 7)}g per day</span></div>`
     : `<div class="total"><span>Estimated protein</span><span>${v.totalProteinEstimate}g of ${r.targetProteinPerWeek}g</span></div>`;
@@ -541,7 +704,7 @@ function renderPlanHome(s) {
     if (s.last.target) { $("proteinTarget").value = String(s.last.target); store.set("proteinTarget", String(s.last.target)); }
     if (s.last.calories) { $("calorieTarget").value = String(s.last.calories); store.set("calorieTarget", String(s.last.calories)); }
     renderGoalUI();
-    prefs = s.last.preferences.slice();
+    prefs = cleanPrefs(s.last.preferences);
     renderPrefRows();
     pendingReprice = s.last.sentAt;
     $("goProtein").click();
