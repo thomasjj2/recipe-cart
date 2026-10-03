@@ -578,7 +578,7 @@ function renderProteinPlan(r, repriceFrom) {
     ? `<div class="total" style="font-size:1rem;font-weight:400"><span>Calories</span><span>≈${Math.round(v.totalCaloriesEstimate / 7)} per day</span></div>`
     : `<div class="total"><span>Estimated calories</span><span>${Math.round(v.totalCaloriesEstimate / 7)} of ${r.targetCaloriesPerDay} per day</span></div>`;
   let compareNote = "";
-  if (c.same) compareNote = "Both modes pick the same products this week.";
+  if (c.same) compareNote = ""; // the tabs are replaced by one note
   else if (!c.comparable) compareNote = "Cheapest mode covers less protein than the Balanced plan, so the totals can't be compared directly.";
   else if (Math.abs(c.savings) < 1 || Math.abs(c.savings) < Math.max(r.ranked.totalCost, r.cheapest.totalCost) * 0.03) compareNote = ""; // too small to matter
   else if (c.savings > 0) compareNote = planMode === "cheapest"
@@ -590,11 +590,13 @@ function renderProteinPlan(r, repriceFrom) {
     <div class="card">
       <b>Your weekly plan</b>
       ${repriceFrom ? `<small class="note" style="display:block;margin-top:4px">Same foods and target as your ${esc(fmtDate(repriceFrom))} plan, repriced with today's Kroger prices.</small>` : ""}
+      ${c.same ? `<small class="note" style="display:block;margin-top:6px">Cheapest and Balanced pick the same products this week, so this is your one plan.</small>` : `
       <div style="display:flex;gap:6px;margin:10px 0 4px">
         <button class="btn ${planMode === "cheapest" ? "" : "ghost"}" data-mode="cheapest" aria-pressed="${planMode === "cheapest"}" style="flex:1">Cheapest</button>
         <button class="btn ${planMode === "ranked" ? "" : "ghost"}" data-mode="ranked" aria-pressed="${planMode === "ranked"}" style="flex:1">Balanced</button>
       </div>
       <small class="note" style="display:block">${planMode === "cheapest" ? (r.goal === "calories" ? "Lowest price per calorie that still covers your protein, using only the foods you listed." : "Lowest price per gram of protein, using only the foods you listed.") : "Splits your goal evenly across every food you picked."}</small>
+      `}
       ${r.goal === "calories" ? calRow + proteinRow : proteinRow + calRow}
       <div class="total" style="font-size:1rem;font-weight:400"><span>Estimated cost</span><span>${money(v.totalCost)}</span></div>
       ${compareNote ? `<small class="note" style="display:block;color:var(--good);font-weight:600;margin-top:4px">${esc(compareNote)}</small>` : ""}
