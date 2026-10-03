@@ -23,8 +23,10 @@
 //    If the picks have too few carbs and fats, the plan stops short and says so, instead of overshooting protein.
 // WRONG FOOD GUARD: a Kroger search for a card food can return a different food (a "93/7" search can return ground turkey).
 //  For card foods, products are kept only if the name passes the card's mustHave and mustNot words (see _nutrition.js).
-// PRICE AWARE BALANCED: the Balanced plan still splits the goal evenly across the picked foods, but for each food it uses the
-//  cheapest suitable product (lowest price per gram of protein, or per calorie in the calorie fill), not just the first result.
+// BALANCED PICKS EVEN SIZES: the Balanced plan splits the goal evenly across the picked foods. For each food it keeps the package
+//  sizes that land closest to that food's even share (a 1 lb tray rather than a 3 lb tray when the share is 350g), then takes the
+//  cheapest of those by price per gram of protein. Evenness comes first, price second. The calorie fill and cart only produce
+//  always take the cheapest suitable product.
 // OVERSIZED PACKAGES: a product is skipped when ONE package alone is more than the goal allows, because it could never
 //  land near the goal: more than 65% of the protein goal, or more than the food's own calorie share of the calorie goal
 //  (a 20 lb box of protein bars, a 10 lb bag of rice). Smaller sizes of the same food are used instead. If every size
@@ -154,14 +156,16 @@ function buildBalanced(entries, target, denseOnly) {
   const share = elig.filter((x) => x.cands.some((c) => c.pp)).length ? target / elig.filter((x) => x.cands.some((c) => c.pp)).length : 0;
   for (const { e, cands } of elig) {
     const ok = cands.filter((c) => c.pp);
-    // Sizes no more than 1.5x this food's even share, otherwise the smallest size.
-    const sized = ok.filter((c) => c.pp <= share * 1.5);
-    const pool = sized.length ? sized : ok.length ? [ok.reduce((a, b) => (b.pp < a.pp ? b : a))] : [];
-    // Price aware: the lowest price per gram of protein among suitable sizes, skipping prepared items unless asked for.
+    // Evenness first: how far each size lands from this food's even share (rounded to whole packages), in percent of the share.
+    // Keep the sizes within 10 points of the most even one, then take the cheapest of those by price per gram of protein.
+    const miss = (c) => Math.abs(Math.max(1, Math.round(share / c.pp)) * c.pp - share) / (share || 1);
+    const best = ok.length ? Math.min(...ok.map(miss)) : 0;
+    const pool = ok.filter((c) => miss(c) <= best + 0.1);
+    // Skip prepared items unless asked for.
     const plain = pool.filter((c) => PREPARED.test(e.name) || !PREPARED.test(c.desc));
-    const fit = (plain.length ? plain : pool).reduce((best, c) => {
+    const fit = (plain.length ? plain : pool).reduce((pick, c) => {
       const price = unitPrice(c.product), cpg = price > 0 ? price / c.pp : Infinity;
-      return !best || cpg < best.cpg ? { ...c, cpg } : best;
+      return !pick || cpg < pick.cpg ? { ...c, cpg } : pick;
     }, null);
     const line = { e, rank: e.rank, name: e.name, product: (fit || cands[0]).product, perPackage: fit ? fit.pp : null, packages: fit ? 0 : null };
     lines.push(line);
