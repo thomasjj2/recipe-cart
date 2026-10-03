@@ -1,4 +1,4 @@
-// POST { idToken, action, foods, goal, mealsPerDay, cookTime, ... } -> meal ideas built from the foods in the user's protein plan.
+// POST { idToken, action, foods, alsoHave, goal, mealsPerDay, cookTime, tzOffset, ... } -> meal ideas built from the foods in the user's protein plan.
 // Actions:
 //   "day"    { dayIndex }                -> { meals: [...], dayProtein, dailyTarget }  (meals may include snacks, type "snack")
 //   "swap"   { dayIndex, meal, avoid }   -> { meals: [oneMeal] }
@@ -6,6 +6,10 @@
 //
 // foods: [{ name, weeklyProtein, weeklyCalories }]  (the user's own food names and what the plan gives them)
 // goal: "protein" (default), "calories", or "both". It decides which cap keeps a single meal from being stuffed.
+//
+// DAILY LIMIT: every day, swap, and recipe request counts as one use. Each user gets MEAL_DAILY_LIMIT uses per local day
+// (default 30, about four weeks of ideas). Emails listed in the UNLIMITED_EMAILS env var (comma separated, and only when
+// the Google account email is verified) are never limited. Counts live in users/{uid}/usage/{date} and nothing else is stored.
 //
 // PRIVACY / DESIGN NOTES
 // - Only food names, amounts, and the cooking settings are sent to the model. No Kroger product, price,
@@ -31,7 +35,31 @@ const G_PER_OZ = 28.3495;
 // than the chosen number of meals can hold, up to 2 snack slots are added so the protein is spread out.
 const MEAL_CAP = 50, SNACK_CAP = 30, MAX_SNACKS = 2, CAP_TOLERANCE = 10;
 const CAL_MEAL_CAP = 900, CAL_SNACK_CAP = 400, CAL_TOLERANCE = 100;
+const DAILY_LIMIT = Math.max(1, Math.round(Number(process.env.MEAL_DAILY_LIMIT)) || 30);
+const UNLIMITED = (process.env.UNLIMITED_EMAILS || "").split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
 const BILLING = /credit balance|billing|purchase credits|plans & billing/i;
+// Counts one use for today. Returns { limited: true } when the user is out of uses. Fails closed: if the count cannot be
+// read or written, the request is refused, so a bug can never quietly switch the limit off.
+async function chargeDailyUse(admin, decoded, tzOffsetMin) {
+  const email = String(decoded.email || "").toLowerCase();
+  if (decoded.email_verified && email && UNLIMITED.includes(email)) return { unlimited: true };
+  const tz = Number.isFinite(tzOffsetMin) ? Math.max(-840, Math.min(840, tzOffsetMin)) : 0;
+  const day = new Date(Date.now() - tz * 60000).toISOString().slice(0, 10);
+  const db = admin.firestore();
+  const ref = db.collection("users").doc(decoded.uid).collection("usage").doc(day);
+  const used = await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const n = snap.exists ? Number(snap.data().mealCalls) || 0 : 0;
+    if (n >= DAILY_LIMIT) return -1;
+    tx.set(ref, { mealCalls: n + 1, updatedAt: Date.now() }, { merge: true });
+    return n + 1;
+  });
+  return { limited: used < 0, used, limit: DAILY_LIMIT };
+}
+const alsoLine = (names) => {
+  const list = (Array.isArray(names) ? names : []).map((x) => clean(x, 40)).filter(Boolean).slice(0, 8);
+  return list.length ? `\nAlso on hand, use as extras when they fit: ${list.join(", ")}` : "";
+};
 const clean = (v, n) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
 
 const per = (f, key) => (f.isCount ? f.nutrition[key + "PerUnit"] : f.nutrition[key + "Per100g"]) ?? 0;
@@ -176,7 +204,9 @@ exports.handler = async (event) => {
   if (!b.idToken) return res(401, { error: "Sign in to get meal ideas." });
 
   try {
-    try { await getAdmin().auth().verifyIdToken(b.idToken); }
+    const admin = getAdmin();
+    let decoded;
+    try { decoded = await admin.auth().verifyIdToken(b.idToken); }
     catch { return res(401, { error: "Please sign in again." }); }
 
     const foods = cleanFoods(b.foods);
@@ -184,6 +214,9 @@ exports.handler = async (event) => {
     const perDay = [2, 3, 4].includes(Number(b.mealsPerDay)) ? Number(b.mealsPerDay) : 3;
     const cook = COOK[b.cookTime] ? b.cookTime : "normal";
     const goal = ["protein", "calories", "both"].includes(b.goal) ? b.goal : "protein";
+    if (!["day", "swap", "detail"].includes(b.action)) return res(400, { error: "Unknown action" });
+    const charge = await chargeDailyUse(admin, decoded, Number(b.tzOffset));
+    if (charge.limited) return res(429, { code: "daily_limit", error: `You've used today's ${charge.limit} meal idea requests. They reset at midnight, and a week of ideas uses 7.` });
 
     if (b.action === "day") {
       const i = Math.max(0, Math.min(6, Math.round(Number(b.dayIndex)) || 0));
@@ -193,7 +226,7 @@ exports.handler = async (event) => {
 Style for the day: ${THEMES[i % THEMES.length]}.
 ${COOK[cook]}
 Protein foods to spread across the day's meals:
-${foodLines(foods)}`;
+${foodLines(foods)}${alsoLine(b.alsoHave)}`;
       const out = await askJSON(MEAL_SYSTEM, user, 700 + 450 * (plan.meals + plan.snacks));
       const meals = (Array.isArray(out.meals) ? out.meals : []).map((m) => sanitizeMeal(m, foods, goal)).filter(Boolean).slice(0, plan.meals + plan.snacks);
       if (!meals.length) return res(502, { error: "Could not plan this day. Try again." });
@@ -209,7 +242,7 @@ ${foodLines(foods)}`;
 ${COOK[cook]}
 Use these protein foods in these exact amounts:
 ${old.items.map((it) => `- ${it.food}: ${it.amount}${foods.find((f) => f.name === it.food)?.isCount ? " (count)" : " g"}`).join("\n")}
-Do not reuse any of these meal titles: ${avoid.join("; ") || "none"}`;
+Do not reuse any of these meal titles: ${avoid.join("; ") || "none"}${alsoLine(b.alsoHave)}`;
       const out = await askJSON(MEAL_SYSTEM, user, 600);
       const meal = sanitizeMeal({ ...(Array.isArray(out.meals) ? out.meals : [])[0], type: old.type }, foods, goal);
       if (!meal) return res(502, { error: "Could not find a swap. Try again." });

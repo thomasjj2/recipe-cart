@@ -21,6 +21,10 @@
 //  - Protein cap (option B): once the protein goal is met, protein dense foods (meat, fish, eggs, dairy) are not added
 //    again. The rest of the calories come from carbs and fats, which can carry their own small amount of protein.
 //    If the picks have too few carbs and fats, the plan stops short and says so, instead of overshooting protein.
+// HOME MODE (mode: "home"): no store, no Kroger search, no packages. The goal is turned into exact weekly amounts of each
+//  picked food: protein is split evenly across the protein dense foods, then calories are filled evenly (within the usual per
+//  food calorie shares) from carbs and fats, using the same rules as the store plans. Cart only produce becomes "extras".
+//  The meal generator reads these amounts exactly like it reads a store plan.
 // WRONG FOOD GUARD: a Kroger search for a card food can return a different food (a "93/7" search can return ground turkey).
 //  For card foods, products are kept only if the name passes the card's mustHave and mustNot words (see _nutrition.js).
 // BALANCED PICKS EVEN SIZES: the Balanced plan splits the goal evenly across the picked foods. For each food it keeps the package
@@ -517,6 +521,69 @@ function finalize(v, entries, proteinTarget, calTarget, cheap = false, spread = 
 
 const signature = (p) => p.plan.map((x) => `${x.product?.upc}:${x.packages}`).sort().join("|");
 
+// Splits `total` evenly across items, but no item gets more than capFn(item). Returns a Map of item -> amount.
+function evenFill(items, total, capFn) {
+  const give = new Map(items.map((i) => [i, 0]));
+  let left = total, active = [...items];
+  for (let g = 0; g < 12 && left > 1 && active.length; g++) {
+    const per = left / active.length, next = [];
+    for (const i of active) {
+      const room = capFn(i) - give.get(i);
+      if (per >= room) { give.set(i, give.get(i) + room); left -= room; } else next.push(i);
+    }
+    if (next.length === active.length) { for (const i of next) give.set(i, give.get(i) + per); break; }
+    active = next;
+  }
+  return give;
+}
+
+function buildHome(entries, goal, pTarget, calTarget) {
+  const foods = [], skipped = [], extras = [];
+  for (const e of entries) {
+    if (!e.nutrition) { skipped.push({ rank: e.rank, name: e.name, reason: "no_estimate" }); continue; }
+    if (e.nutrition.cartOnly) { extras.push(e.name); continue; }
+    const n = e.nutrition, count = n.unit === "count";
+    foods.push({ e, rank: e.rank, name: e.name, n, count, pPer: (count ? n.proteinPerUnit : n.proteinPer100g) ?? 0, cPer: (count ? n.caloriesPerUnit : n.caloriesPer100g) ?? 0, amount: 0, dense: isProteinDense(n) });
+  }
+  // amount is grams for weight foods and a number of items for count foods
+  const protOf = (f) => (f.count ? f.amount * f.pPer : (f.amount / 100) * f.pPer);
+  const calOf = (f) => (f.count ? f.amount * f.cPer : (f.amount / 100) * f.cPer);
+  const fromProtein = (f, p) => (f.count ? p / f.pPer : (p / f.pPer) * 100);
+  const fromCalories = (f, c) => (f.count ? c / f.cPer : (c / f.cPer) * 100);
+
+  if (goal === "protein") {
+    const src = foods.filter((f) => f.pPer > 0);
+    for (const f of src) f.amount = fromProtein(f, pTarget / src.length);
+  } else {
+    const dense = foods.filter((f) => f.dense && f.pPer > 0), light = foods.filter((f) => !f.dense && f.cPer > 0);
+    let incidental = 0;
+    for (let k = 0; k < 8; k++) {
+      // Protein dense foods cover the protein goal minus what the carbs and fats already carry.
+      const need = Math.max(0, pTarget - incidental);
+      for (const f of dense) f.amount = fromProtein(f, need / dense.length);
+      const room = Math.max(0, calTarget - dense.reduce((s, f) => s + calOf(f), 0));
+      const give = evenFill(light, room, (f) => calShareFor(f.n) * calTarget);
+      for (const f of light) f.amount = fromCalories(f, give.get(f));
+      incidental = light.reduce((s, f) => s + protOf(f), 0);
+    }
+  }
+  const plan = foods.filter((f) => f.amount > 0).map((f) => {
+    const amount = f.count ? Math.max(1, Math.round(f.amount)) : Math.max(5, Math.round(f.amount / 5) * 5);
+    const g = { ...f, amount };
+    return { rank: f.rank, name: f.name, unit: f.count ? "count" : "g", amount,
+      proteinFromThis: Math.round(protOf(g)), caloriesFromThis: Math.round(calOf(g)),
+      confidence: f.n.confidence || null, assumptionNote: f.n.note || null };
+  });
+  const prot = plan.reduce((s, p) => s + p.proteinFromThis, 0), cal = plan.reduce((s, p) => s + p.caloriesFromThis, 0);
+  return {
+    plan, extras, unmatched: skipped,
+    totalProteinEstimate: prot, totalCaloriesEstimate: cal,
+    shortfall: goal !== "calories" && prot < pTarget * 0.95 ? Math.round(pTarget - prot) : 0,
+    calorieShortfall: calTarget && cal < calTarget * CAL_FLOOR ? Math.round(calTarget - cal) : 0,
+    proteinOver: calTarget && prot > pTarget * PROTEIN_MAX ? Math.round(prot - pTarget) : 0,
+  };
+}
+
 exports.handler = async (event) => {
   if (event.httpMethod !== "POST") return res(405, { error: "POST only" });
   let b; try { b = JSON.parse(event.body || "{}"); } catch { return res(400, { error: "Bad JSON" }); }
@@ -530,6 +597,11 @@ exports.handler = async (event) => {
   if (!preferences.length) return res(400, { error: "Add at least one preferred protein source" });
   // Calorie goals use the whole ranked list by default. Send spreadFoods: false to go back to "stop once covered".
   const spread = goal !== "protein" && b.spreadFoods !== false;
+
+  if (b.mode === "home") {
+    const entries = preferences.map((name, i) => ({ rank: i + 1, name: String(name).slice(0, 60), nutrition: lookupProtein(name) }));
+    return res(200, { mode: "home", goal, targetProteinPerWeek: target, targetCaloriesPerDay: goal === "protein" ? 0 : calPerDay, home: buildHome(entries, goal, target, calTarget) });
+  }
 
   try {
     let locationId = b.locationId || null;
