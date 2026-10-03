@@ -580,10 +580,11 @@ function renderProteinPlan(r, repriceFrom) {
   let compareNote = "";
   if (c.same) compareNote = "Both modes pick the same products this week.";
   else if (!c.comparable) compareNote = "Cheapest mode covers less protein than the Balanced plan, so the totals can't be compared directly.";
-  else if (c.savings > 0.005) compareNote = planMode === "cheapest"
+  else if (Math.abs(c.savings) < 1 || Math.abs(c.savings) < Math.max(r.ranked.totalCost, r.cheapest.totalCost) * 0.03) compareNote = ""; // too small to matter
+  else if (c.savings > 0) compareNote = planMode === "cheapest"
     ? `${money(c.savings)} cheaper than the Balanced plan (${money(r.ranked.totalCost)}).`
-    : `Cheapest mode would save you ${money(c.savings)} this week.`;
-  else if (c.savings < -0.005) compareNote = `The Balanced plan costs ${money(-c.savings)} less this week.`;
+    : `Cheapest would save ${money(c.savings)} by leaning on the best deals.`;
+  else compareNote = `The Balanced plan costs ${money(-c.savings)} less this week.`;
 
   $("proteinResults").innerHTML = `
     <div class="card">
