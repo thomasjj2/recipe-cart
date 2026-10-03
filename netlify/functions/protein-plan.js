@@ -21,6 +21,10 @@
 //  - Protein cap (option B): once the protein goal is met, protein dense foods (meat, fish, eggs, dairy) are not added
 //    again. The rest of the calories come from carbs and fats, which can carry their own small amount of protein.
 //    If the picks have too few carbs and fats, the plan stops short and says so, instead of overshooting protein.
+// WRONG FOOD GUARD: a Kroger search for a card food can return a different food (a "93/7" search can return ground turkey).
+//  For card foods, products are kept only if the name passes the card's mustHave and mustNot words (see _nutrition.js).
+// PRICE AWARE BALANCED: the Balanced plan still splits the goal evenly across the picked foods, but for each food it uses the
+//  cheapest suitable product (lowest price per gram of protein, or per calorie in the calorie fill), not just the first result.
 // OVERSIZED PACKAGES: a product is skipped when ONE package alone is more than the goal allows, because it could never
 //  land near the goal: more than 65% of the protein goal, or more than the food's own calorie share of the calorie goal
 //  (a 20 lb box of protein bars, a 10 lb bag of rice). Smaller sizes of the same food are used instead. If every size
@@ -28,7 +32,7 @@
 // CART ONLY FOODS (tomatoes, spinach and other low calorie produce): skipped by every protein and calorie step,
 //  then added at the end as one package each, so they are in the cart but never counted toward a goal.
 const { searchProducts, findNearestLocation } = require("./_kroger");
-const { lookupProtein, PLANNING, calShareFor, isProteinDense } = require("./_nutrition");
+const { lookupProtein, matchesFood, PLANNING, calShareFor, isProteinDense } = require("./_nutrition");
 
 const LBS_PER_KG = 2.20462;
 const MAX_SHARE_PER_ITEM = PLANNING.MAX_SHARE_PER_ITEM; // no single food covers more than 65% of the goal, unless it's the last option left
@@ -144,14 +148,21 @@ function buildBalanced(entries, target, denseOnly) {
     if (e.nutrition && e.nutrition.proteinPer100g === 0) continue; // calorie only foods are added in the calorie fill
     if (denseOnly && e.nutrition && !isProteinDense(e.nutrition)) continue; // carb staples are added in the calorie fill
     if (!e.matches[0]) { skipped.push({ rank: e.rank, name: e.name, reason: missReason(e) }); continue; }
-    const cands = e.matches.map((t) => { const item = t.items?.[0]; return { pp: proteinPerPackage(e.nutrition, item), product: toProduct(t, item) }; });
+    const cands = e.matches.map((t) => { const item = t.items?.[0]; return { pp: proteinPerPackage(e.nutrition, item), product: toProduct(t, item), desc: t.description || "" }; });
     elig.push({ e, cands });
   }
   const share = elig.filter((x) => x.cands.some((c) => c.pp)).length ? target / elig.filter((x) => x.cands.some((c) => c.pp)).length : 0;
   for (const { e, cands } of elig) {
     const ok = cands.filter((c) => c.pp);
-    // Prefer the first (most relevant) size that is no more than 1.5x this food's even share, otherwise the smallest size.
-    const fit = ok.find((c) => c.pp <= share * 1.5) || ok.reduce((a, b) => (!a || b.pp < a.pp ? b : a), null);
+    // Sizes no more than 1.5x this food's even share, otherwise the smallest size.
+    const sized = ok.filter((c) => c.pp <= share * 1.5);
+    const pool = sized.length ? sized : ok.length ? [ok.reduce((a, b) => (b.pp < a.pp ? b : a))] : [];
+    // Price aware: the lowest price per gram of protein among suitable sizes, skipping prepared items unless asked for.
+    const plain = pool.filter((c) => PREPARED.test(e.name) || !PREPARED.test(c.desc));
+    const fit = (plain.length ? plain : pool).reduce((best, c) => {
+      const price = unitPrice(c.product), cpg = price > 0 ? price / c.pp : Infinity;
+      return !best || cpg < best.cpg ? { ...c, cpg } : best;
+    }, null);
     const line = { e, rank: e.rank, name: e.name, product: (fit || cands[0]).product, perPackage: fit ? fit.pp : null, packages: fit ? 0 : null };
     lines.push(line);
     if (fit) usable.push(line);
@@ -351,7 +362,7 @@ function fillCalories(v, entries, calTarget, cheap, spread, proteinTarget, share
       product = line.product;
       perCal = amountPerPackage(e.nutrition, { size: product?.size }, "calories");
     } else {
-      const pick = pickProduct(e, room, cheap);
+      const pick = pickProduct(e, room, true); // always the cheapest suitable product
       if (pick) ({ product, perCal } = pick);
     }
     if (!product || !perCal) return;
@@ -471,7 +482,6 @@ function addCartOnly(v, entries, cheap) {
       const product = toProduct(top, top.items?.[0]);
       const price = unitPrice(product);
       if (!pick) pick = { product, price };
-      if (!cheap) break;
       if (price != null && price > 0 && (pick.price == null || price < pick.price)) pick = { product, price };
     }
     if (!pick) continue;
@@ -534,9 +544,11 @@ exports.handler = async (event) => {
     // Drop oversized packages up front, so every plan (balanced, cheapest, calorie fill, rebalance) only sees sizes that fit.
     for (const e of entries) {
       if (!e.nutrition) continue;
-      const all = e.matches;
-      e.matches = all.filter((top) => fitsGoal(e.nutrition, top.items?.[0], target, calTarget));
-      e.tooBig = all.length > 0 && e.matches.length === 0;
+      // Card foods only: drop results that are a different food (guard words come from _nutrition.js).
+      const isCard = !!e.nutrition.searchTerm && e.name.toLowerCase() === e.nutrition.searchTerm.toLowerCase();
+      const relevant = isCard ? e.matches.filter((top) => matchesFood(e.nutrition, top.description)) : e.matches;
+      e.matches = relevant.filter((top) => fitsGoal(e.nutrition, top.items?.[0], target, calTarget));
+      e.tooBig = relevant.length > 0 && e.matches.length === 0;
     }
 
     const ranked = finalize(buildRanked(entries, target, goal !== "protein", goal === "protein" || spread), entries, target, calTarget, false, spread);
