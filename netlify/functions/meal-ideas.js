@@ -126,8 +126,21 @@ async function askModel(system, user, maxTokens) {
     err.status = r.status;
     throw err;
   }
+  // A reply cut off at the token limit is invalid JSON. Flag it so the caller can retry with more room.
+  if (data.stop_reason === "max_tokens") { const err = new Error("Model reply was cut off at the token limit"); err.truncated = true; throw err; }
   const out = (data.content || []).filter((c) => c.type === "text").map((c) => c.text).join("");
   return JSON.parse(out.slice(out.indexOf("{"), out.lastIndexOf("}") + 1));
+}
+
+// Asks the model for JSON and retries once, with 50% more room, when the reply was cut off or was not valid JSON.
+// Seven days are requested at once, so one unlucky reply should not leave a day blank.
+async function askJSON(system, user, maxTokens) {
+  try { return await askModel(system, user, maxTokens); }
+  catch (e) {
+    if (!(e.truncated || e instanceof SyntaxError)) throw e;
+    console.error("meal-ideas retrying:", e.message);
+    return askModel(system, user, Math.round(maxTokens * 1.5));
+  }
 }
 
 const MEAL_SYSTEM = `You plan varied, realistic home cooked meals for one person. The person already bought specific protein foods, and your job is to spread them across meals so they never get bored. Rules:
@@ -138,6 +151,7 @@ const MEAL_SYSTEM = `You plan varied, realistic home cooked meals for one person
 - Never mention protein, calories, or any nutrition numbers. Never mention prices or brands.
 - Meals must differ from each other in flavor and style.
 - Split each food's daily amount across the meals and snacks so every meal gets a similar share. Never put most of a day's food into one meal.
+- Keep every "summary" under 15 words.
 - A snack is a small, quick item (5 minutes or less) that gets a smaller share than a meal. List the meals first, then the snacks.
 Respond with ONLY JSON, no markdown: {"meals":[{"title":str,"type":"meal" or "snack","summary":str,"minutes":number,"items":[{"food":str,"amount":number}],"extras":[str]}]}
 "summary" is one short sentence describing how the meal is made.`;
@@ -180,7 +194,7 @@ Style for the day: ${THEMES[i % THEMES.length]}.
 ${COOK[cook]}
 Protein foods to spread across the day's meals:
 ${foodLines(foods)}`;
-      const out = await askModel(MEAL_SYSTEM, user, 1400);
+      const out = await askJSON(MEAL_SYSTEM, user, 700 + 450 * (plan.meals + plan.snacks));
       const meals = (Array.isArray(out.meals) ? out.meals : []).map((m) => sanitizeMeal(m, foods, goal)).filter(Boolean).slice(0, plan.meals + plan.snacks);
       if (!meals.length) return res(502, { error: "Could not plan this day. Try again." });
       return res(200, { meals, dayProtein: meals.reduce((s, m) => s + m.protein, 0), dailyTarget: plan.daily, dayCalories: meals.reduce((s, m) => s + m.calories, 0), dailyCalorieTarget: plan.dailyCal });
@@ -196,7 +210,7 @@ ${COOK[cook]}
 Use these protein foods in these exact amounts:
 ${old.items.map((it) => `- ${it.food}: ${it.amount}${foods.find((f) => f.name === it.food)?.isCount ? " (count)" : " g"}`).join("\n")}
 Do not reuse any of these meal titles: ${avoid.join("; ") || "none"}`;
-      const out = await askModel(MEAL_SYSTEM, user, 500);
+      const out = await askJSON(MEAL_SYSTEM, user, 600);
       const meal = sanitizeMeal({ ...(Array.isArray(out.meals) ? out.meals : [])[0], type: old.type }, foods, goal);
       if (!meal) return res(502, { error: "Could not find a swap. Try again." });
       return res(200, { meals: [meal] });
@@ -209,7 +223,7 @@ Do not reuse any of these meal titles: ${avoid.join("; ") || "none"}`;
 Protein foods and exact amounts:
 ${m.items.map((it) => `- ${it.food}: ${it.qty}`).join("\n")}
 Extras: ${m.extras.join(", ") || "none"}`;
-      const out = await askModel(DETAIL_SYSTEM, user, 700);
+      const out = await askJSON(DETAIL_SYSTEM, user, 900);
       const ingredients = (Array.isArray(out.ingredients) ? out.ingredients : [])
         .map((i) => ({ name: clean(i?.name, 100), qty: clean(i?.qty, 50) })).filter((i) => i.name).slice(0, 15);
       const steps = (Array.isArray(out.steps) ? out.steps : []).map((s) => clean(s, 300)).filter(Boolean).slice(0, 6);
