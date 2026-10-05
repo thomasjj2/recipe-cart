@@ -1209,9 +1209,10 @@ function ideaCardHtml(i, m) {
   if (m.open) {
     if (m.loading) body = `<p class="note">Writing the recipe…</p>`;
     else if (m.detail) {
-      const have = m.detail.ingredients.filter((x) => x.have), miss = m.detail.ingredients.filter((x) => !x.have);
+      const have = m.detail.ingredients.filter((x) => x.kind === "have"), basics = m.detail.ingredients.filter((x) => x.kind === "basic"), miss = m.detail.ingredients.filter((x) => x.kind === "need");
       const li = (x) => `<li>${esc(x.qty ? x.qty + " " : "")}${esc(x.name)}</li>`;
-      body = `<h4>You have</h4><ul class="ings">${have.map(li).join("") || "<li>Just the basics</li>"}</ul>
+      body = `<h4>You have</h4><ul class="ings">${have.map(li).join("") || "<li>None of your foods</li>"}</ul>
+        ${basics.length ? `<small class="note" style="display:block">Pantry basics: ${basics.map((x) => esc(x.name)).join(", ")}</small>` : ""}
         <h4>You need</h4>${miss.length ? `<ul class="ings">${miss.map(li).join("")}</ul>` : `<p class="note" style="margin:4px 0">Nothing else to buy.</p>`}
         <h4>Recipe</h4><ol class="ings">${m.detail.steps.map((t) => `<li>${esc(t)}</li>`).join("")}</ol>
         <small class="note" style="display:block">Check cook times and safe internal temperatures for meat, poultry, pork and fish.</small>`;
@@ -1256,6 +1257,8 @@ function renderIdeas() {
       : ideas.list.length ? `<button class="btn ghost block" data-iact="more">More ideas</button>` : "");
 }
 
+// The recipe is the source of truth, so the card's counts follow it once it is written.
+function applyDetail(m, d) { m.detail = d; if (Array.isArray(d.uses)) m.uses = d.uses; if (Array.isArray(d.needs)) m.needs = d.needs; }
 function detailBody(m) { return { meal: { title: m.title, summary: m.summary, uses: m.uses, needs: m.needs } }; }
 
 async function toggleIdea(i) {
@@ -1264,7 +1267,7 @@ async function toggleIdea(i) {
   m.open = true;
   if (!m.detail) {
     m.loading = true; renderIdeas();
-    try { m.detail = (await ideasApi("detail", detailBody(m))).detail; }
+    try { applyDetail(m, (await ideasApi("detail", detailBody(m))).detail); }
     catch (e) { m.open = false; banner("err", e.message || "Could not write that recipe."); }
     m.loading = false;
   }
@@ -1276,7 +1279,7 @@ async function saveIdea(i) {
   const m = ideas.list[i];
   m.saving = true; renderIdeas();
   try {
-    if (!m.detail) m.detail = (await ideasApi("detail", detailBody(m))).detail;
+    if (!m.detail) applyDetail(m, (await ideasApi("detail", detailBody(m))).detail);
     // Saves only the title, ingredient names and amounts, and the recipe steps. No Kroger products or prices.
     await api("save", { title: m.title, ingredients: m.detail.ingredients.map((x) => ({ name: x.name, qty: x.qty })), steps: m.detail.steps, servings: m.detail.servings, proteinPerServing: m.detail.proteinPerServing });
     m.saved = true;
@@ -1293,7 +1296,7 @@ async function ideaPrices(i) {
   store.set("zip", zip);
   m.cart = { loading: true }; renderIdeas();
   try {
-    const miss = m.detail.ingredients.filter((x) => !x.have).map((x) => ({ name: x.name, qty: x.qty }));
+    const miss = m.detail.ingredients.filter((x) => x.kind === "need").map((x) => ({ name: x.name, qty: x.qty }));
     const r = await postJSON("/.netlify/functions/match-products", { ingredients: miss, zip });
     m.cart = { items: r.items };
   } catch (e) { m.cart = null; banner("err", e.message || "Could not look up prices."); }
