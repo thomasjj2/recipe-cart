@@ -60,6 +60,8 @@ async function askClaude(system, content, maxTokens) {
   });
   if (!r.ok) throw new Error("model_error");
   const d = await r.json();
+  // A reply that ran out of room would be cut off mid sentence, so treat it as a failure instead of showing a partial recipe.
+  if (d.stop_reason === "max_tokens") throw new Error("cut_off");
   const text = (d.content || []).filter((b) => b.type === "text").map((b) => b.text).join("");
   return JSON.parse(text.replace(/```json|```/g, "").trim());
 }
@@ -87,7 +89,7 @@ Shape: {"servings":1,"proteinPerServing":number,"ingredients":[{"name":string,"q
 Rules:
 - Use only the foods the person has, salt, pepper, cooking oil, water, and the foods listed in needsToBuy. Do not add any other ingredient.
 - "qty" is a short amount such as "2 thighs" or "1 cup".
-- Give 4 to 8 clear steps. For meat, poultry, pork and fish, include the safe internal temperature.
+- Give 4 to 8 clear steps, each one complete sentence or two, under 200 characters. For meat, poultry, pork and fish, include the safe internal temperature.
 - "proteinPerServing" is a rough estimate in grams.`;
 
 exports.handler = async (event) => {
@@ -119,7 +121,7 @@ exports.handler = async (event) => {
         highProtein: body.highProtein ? "Each meal should have about 30g of protein or more." : "no protein requirement",
         avoid,
       });
-      const out = await askClaude(IDEAS_SYSTEM, prompt, 1800);
+      const out = await askClaude(IDEAS_SYSTEM, prompt, 2500);
       const lower = new Set(items.map((x) => x.toLowerCase()));
       const seen = new Set(avoid.map((x) => x.toLowerCase()));
       const list = [];
@@ -149,7 +151,7 @@ exports.handler = async (event) => {
         usesFromTheirFoods: cleanList(m.uses, 20, 40),
         needsToBuy: cleanList(m.needs, 6, 40),
       });
-      const out = await askClaude(DETAIL_SYSTEM, prompt, 1500);
+      const out = await askClaude(DETAIL_SYSTEM, prompt, 2500);
       const used = new Set();
       const ingredients = (Array.isArray(out.ingredients) ? out.ingredients : []).slice(0, 20)
         .map((x) => ({ name: clean(x.name, 60), qty: clean(x.qty, 30) }))
@@ -159,7 +161,7 @@ exports.handler = async (event) => {
           if (food) { used.add(food); return { ...x, kind: "have" }; }
           return { ...x, kind: isBasic(x.name) ? "basic" : "need" };
         });
-      const steps = cleanList(out.steps, 10, 300);
+      const steps = cleanList(out.steps, 10, 400);
       if (!ingredients.length || !steps.length) return json(502, { error: "Could not write that recipe. Try again." });
       return json(200, {
         detail: {

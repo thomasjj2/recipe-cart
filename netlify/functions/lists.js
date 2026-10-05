@@ -11,7 +11,7 @@ const { getAdmin } = require("./_firebaseAdmin");
 
 const MAX_LISTS = 50;
 const MAX_ITEMS = 40;
-const MAX_STEPS = 6;
+const MAX_STEPS = 10;
 const clean = (v, n) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
 const intIn = (v, min, max) => { const n = Math.round(Number(v)); return Number.isFinite(n) && n >= min && n <= max ? n : null; };
 
@@ -42,7 +42,7 @@ exports.handler = async (event) => {
         .slice(0, MAX_ITEMS);
       if (!ingredients.length) return res(400, { error: "There are no ingredients to save." });
 
-      const steps = (Array.isArray(b.steps) ? b.steps : []).map((t) => clean(t, 300)).filter(Boolean).slice(0, MAX_STEPS);
+      const steps = (Array.isArray(b.steps) ? b.steps : []).map((t) => clean(t, 400)).filter(Boolean).slice(0, MAX_STEPS);
 
       const servings = intIn(b.servings, 1, 50);
       const proteinPerServing = intIn(b.proteinPerServing, 0, 500);
