@@ -2,33 +2,37 @@
 <html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light only">
 <title>Recipe Cart</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=Fraunces:opsz,wght@9..144,700;9..144,800&display=swap" rel="stylesheet">
 <style>
-:root{--bg:#fbf6ee;--ink:#241c12;--mute:#7a6f5c;--line:#e4d8c3;--card:#fff;--accent:#d9631e;--good:#3f7a4b;--bad:#a8341c}
+:root{color-scheme:light;--bg:#FAF6EE;--ink:#251C14;--mute:#7a6f5c;--line:#e4d8c3;--card:#fff;--sand:#EFE6D5;--accent:#DB621F;--good:#3E7D4F;--bad:#a8341c}
+html{background:var(--bg)}
+h1,h2,h3,.card>b:first-child,.idea>b{font-family:"Fraunces",Georgia,serif;font-weight:800}
 *{box-sizing:border-box}
 [hidden]{display:none !important}
 body{margin:0;background:var(--bg);color:var(--ink);font:400 16px/1.5 "Bricolage Grotesque",system-ui,sans-serif}
 main{max-width:560px;margin:0 auto;padding:calc(58px + env(safe-area-inset-top)) 18px 30px}
-h1{font-size:2.1rem;line-height:1.05;font-weight:800;margin:22px 0 4px;letter-spacing:-.02em}
+h1{font-size:2.4rem;line-height:1.05;font-weight:800;margin:22px 0 6px;letter-spacing:-.01em;color:var(--accent)}
+h1 .leaf{vertical-align:top;margin-left:2px}
 .sub{color:var(--mute);margin:0 0 18px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:12px}
 textarea{width:100%;min-height:120px;padding:12px;border:1.5px solid var(--line);border-radius:8px;font:inherit;resize:vertical}
 input[type=text]{width:100%;padding:11px;border:1.5px solid var(--line);border-radius:8px;font:inherit}
 label{display:block;font-weight:600;font-size:.9rem;margin:10px 0 4px}
-.btn{min-height:46px;padding:12px 16px;border:0;border-radius:8px;background:var(--ink);color:#fff;font-family:inherit;font-size:1rem;font-weight:600;cursor:pointer}
+.btn{min-height:46px;padding:12px 16px;border:0;border-radius:8px;background:var(--good);color:#fff;font-family:inherit;font-size:1rem;font-weight:600;cursor:pointer}
 .btn.primary{background:var(--accent)}
 .btn.ghost{background:transparent;color:var(--ink);border:1.5px solid var(--line)}
 .btn.danger{background:#fff;color:var(--bad);border:1.5px solid #e9b8ab}
 .btn:disabled{opacity:.5}
 .btn.block{display:block;width:100%;margin-top:10px}
-#signin{position:fixed;top:0;left:0;right:0;background:var(--ink);color:#fff;padding:calc(8px + env(safe-area-inset-top)) 14px 8px;font-size:.85rem;display:flex;justify-content:space-between;align-items:center;gap:10px;z-index:5}
+#signin{position:fixed;top:0;left:0;right:0;background:var(--sand);color:var(--ink);border-bottom:1px solid var(--line);padding:calc(8px + env(safe-area-inset-top)) 14px 8px;font-size:.85rem;display:flex;justify-content:space-between;align-items:center;gap:10px;z-index:5}
 #signin span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#signin button{background:none;border:1px solid #fff5;color:#fff;border-radius:6px;padding:8px 12px;min-height:36px;font:inherit;cursor:pointer;flex-shrink:0}
-.tabs{display:flex;gap:6px;background:#efe6d4;padding:4px;border-radius:10px;margin-bottom:14px}
+#signin button{background:#fff;border:1.5px solid var(--line);color:var(--ink);border-radius:6px;padding:8px 12px;min-height:36px;font:inherit;cursor:pointer;flex-shrink:0}
+.tabs{display:flex;gap:6px;background:var(--sand);padding:4px;border-radius:10px;margin-bottom:14px}
 .tabs button{flex:1;min-height:44px;border:0;border-radius:7px;background:transparent;font:inherit;font-weight:600;color:var(--mute);cursor:pointer}
-.tabs button[aria-selected=true]{background:var(--ink);color:#fff}
+.tabs button[aria-selected=true]{background:var(--accent);color:#fff}
 .item{display:flex;gap:10px;align-items:center;padding:9px 0;border-bottom:1px solid var(--line)}
 .item img,.item .thumb{width:44px;height:44px;object-fit:contain;border-radius:6px;background:#f4ede0;flex-shrink:0}
 .item .info{flex:1;min-width:0}
@@ -46,8 +50,8 @@ small.note{color:var(--mute)}
 .prefrow .rank{width:22px;text-align:center;font-weight:700;color:var(--mute);flex-shrink:0}
 .cattabs{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;margin:4px 0 8px;-webkit-overflow-scrolling:touch}
 .cattab{flex-shrink:0;min-height:40px;padding:8px 12px;border:1.5px solid var(--line);border-radius:999px;background:#fff;font:inherit;font-weight:600;color:var(--mute);cursor:pointer}
-.cattab[aria-pressed=true]{background:var(--ink);border-color:var(--ink);color:#fff}
-.cattab .cnt{display:inline-block;min-width:18px;margin-left:4px;padding:0 5px;border-radius:9px;background:var(--accent);color:#fff;font-size:.75rem;line-height:18px}
+.cattab[aria-pressed=true]{background:var(--accent);border-color:var(--accent);color:#fff}
+.cattab .cnt{display:inline-block;min-width:18px;margin-left:4px;padding:0 5px;border-radius:9px;background:#fff;color:var(--accent);font-size:.75rem;line-height:18px}
 .foodgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .tile{position:relative;display:flex;flex-direction:column;align-items:flex-start;gap:2px;min-height:84px;padding:10px;border:1.5px solid var(--line);border-radius:10px;background:#fff;font:inherit;text-align:left;cursor:pointer;color:var(--ink)}
 .tile .em{font-size:1.5rem;line-height:1.1}
@@ -81,18 +85,43 @@ details.saved .meta{display:block;color:var(--mute);font-size:.85rem;font-weight
 footer{max-width:560px;margin:0 auto;padding:0 18px calc(40px + env(safe-area-inset-bottom));color:var(--mute);font-size:.85rem}
 footer a{color:var(--mute)}
 :focus-visible{outline:3px solid #f2c230;outline-offset:2px}
+.pills{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 0}
+.pill{display:inline-flex;align-items:center;gap:8px;min-height:38px;padding:4px 12px;border:1.5px solid var(--accent);border-radius:999px;background:#fdf1e7;font:inherit;font-weight:600;color:var(--ink);cursor:pointer}
+.pill span{color:var(--mute);font-weight:400}
+.idea h4{margin:14px 0 2px;font-size:.95rem}
 </style></head><body>
 <div id="signin"><span id="who">Not signed in</span><button id="signbtn">Sign in</button></div>
 <main>
-<h1>Recipe → Cart</h1>
-<p class="sub">Hit your protein or calorie goal and get a week of meals. Shop at Kroger for less, or cook from what you have.</p>
+<h1>Recipe Cart<svg class="leaf" viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="M20 3C10 3 4 8 4 15c0 2 .6 3.6 1.5 4.7C7 14 11 10.5 16 9c-4 2.5-7 6-8.5 11C16 20.5 20 14 20 3z" fill="#3E7D4F"/></svg></h1>
+<p class="sub">Tell us what is in your kitchen and get meal ideas that are quick and different every time. Buy what is missing from your Kroger cart.</p>
 
 <div id="banner" role="status"></div>
 
 <div class="tabs" role="tablist" aria-label="Sections">
-  <button role="tab" id="tabProtein" aria-selected="true" aria-controls="paneProtein">My goals</button>
+  <button role="tab" id="tabIdeas" aria-selected="true" aria-controls="paneIdeas">Ideas</button>
+  <button role="tab" id="tabProtein" aria-selected="false" aria-controls="paneProtein">My goals</button>
   <button role="tab" id="tabBuild" aria-selected="false" aria-controls="paneBuild">Meals</button>
 </div>
+
+<section id="paneIdeas" role="tabpanel" aria-labelledby="tabIdeas">
+  <div class="card">
+    <b>What's in your kitchen?</b>
+    <small class="note" style="display:block;margin:2px 0 8px">Type what you have. Separate foods with commas.</small>
+    <div style="display:flex;gap:8px">
+      <input id="kitchenIn" type="text" maxlength="200" placeholder="chicken, rice, spinach" autocomplete="off" style="flex:1">
+      <button class="btn ghost" id="kitchenAdd" style="flex-shrink:0">Add</button>
+    </div>
+    <div id="kitchenPills" class="pills"></div>
+    <label>Tap to add common foods</label>
+    <div id="stapleChips" class="pills" style="margin-top:0"></div>
+    <label>Cooking time</label>
+    <div id="ideaCook" style="display:flex;gap:6px"></div>
+    <div id="ideaHp" style="display:flex;gap:6px;margin-top:6px"></div>
+    <small class="note" id="ideasMsg" role="status" style="display:block;margin-top:8px;color:var(--bad)"></small>
+    <button class="btn primary block" id="goIdeas">Get ideas</button>
+  </div>
+  <div id="ideasList"></div>
+</section>
 
 <section id="paneBuild" role="tabpanel" aria-labelledby="tabBuild" hidden>
   <div id="mealsSettings"></div>
@@ -109,7 +138,7 @@ footer a{color:var(--mute)}
   <div id="lists"></div>
 </section>
 
-<section id="paneProtein" role="tabpanel" aria-labelledby="tabProtein">
+<section id="paneProtein" role="tabpanel" aria-labelledby="tabProtein" hidden>
   <div id="planHome"></div>
   <div class="card">
     <b>How do you want to use it?</b>
@@ -184,7 +213,7 @@ const firebaseConfig = {   apiKey: "AIzaSyDRjr8mZpwsjBW1wTbGFJbiB5sS9acc4-s",
   appId: "1:479408777820:web:7ff84f540ee5cc604f9499" };
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
-let user = null, matched = null, parsed = null, savedLists = [], tab = "protein";
+let user = null, matched = null, parsed = null, savedLists = [], tab = "ideas";
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const money = (n) => (n == null ? null : "$" + Number(n).toFixed(2));
@@ -446,6 +475,8 @@ function banner(kind, msg) { $("banner").innerHTML = `<div class="banner ${kind}
 // ---- Tabs ----
 function setTab(name) {
   tab = name;
+  $("paneIdeas").hidden = name !== "ideas";
+  $("tabIdeas").setAttribute("aria-selected", String(name === "ideas"));
   $("paneBuild").hidden = name !== "build";
   $("paneProtein").hidden = name !== "protein";
   $("tabBuild").setAttribute("aria-selected", String(name === "build"));
@@ -453,6 +484,7 @@ function setTab(name) {
   if (name === "build") { loadLists(); renderMeals(); }
   if (name === "protein") loadPlanHome();
 }
+$("tabIdeas").onclick = () => setTab("ideas");
 $("tabBuild").onclick = () => setTab("build");
 $("tabProtein").onclick = () => setTab("protein");
 
@@ -808,7 +840,7 @@ async function loadLists() {
     const r = await api("list");
     savedLists = r.lists || [];
     if (!savedLists.length) {
-      box.innerHTML = `<div class="card empty"><p>No saved meals yet. Get meal ideas from your plan, then tap Save on the ones you like.</p></div>`;
+      box.innerHTML = `<div class="card empty"><p>No saved meals yet. Get ideas from what is in your kitchen, then tap Save on the ones you like.</p></div>`;
       return;
     }
     box.innerHTML = savedLists.map((l) => {
@@ -1088,6 +1120,216 @@ $("mealsWeek").addEventListener("click", (ev) => {
 });
 renderMeals();
 renderPlanHome(null); // new visitors see how it works right away
+
+// ---- Ideas from your kitchen ----
+// The user types what they have, gets meal ideas, and sends only the missing items to their Kroger cart.
+// Nothing generated is stored unless the user taps Save. The food list stays on this device.
+const STAPLES = ["Eggs", "Chicken", "Ground beef", "Rice", "Pasta", "Potatoes", "Onion", "Garlic", "Canned beans", "Tortillas", "Cheese", "Frozen vegetables"];
+const MAX_KITCHEN = 20;
+function cleanKitchen(arr) {
+  const seen = new Set(), out = [];
+  for (const v of Array.isArray(arr) ? arr : []) {
+    const t = String(v ?? "").replace(/\s+/g, " ").trim().slice(0, 40);
+    if (t && !seen.has(t.toLowerCase())) { seen.add(t.toLowerCase()); out.push(t); }
+  }
+  return out.slice(0, MAX_KITCHEN);
+}
+let kitchen = [];
+try { kitchen = cleanKitchen(JSON.parse(store.get("kitchenItems") || "[]")); } catch { kitchen = []; }
+const ideaFilters = {
+  cook: ["quick", "normal", "cook"].includes(store.get("ideaCook")) ? store.get("ideaCook") : "quick",
+  protein: store.get("ideaProtein") === "1",
+};
+let ideas = null; // { items, list: [{ title, summary, minutes, uses, needs, open, loading, detail, saving, saved, cart }], busy }
+const ideasMsg = (t) => { $("ideasMsg").textContent = t || ""; };
+const hasKitchen = (n) => kitchen.some((k) => k.toLowerCase() === n.toLowerCase());
+
+function renderKitchen() {
+  store.set("kitchenItems", JSON.stringify(kitchen));
+  $("kitchenPills").innerHTML = kitchen.map((k, i) =>
+    `<button class="pill" data-rm="${i}" aria-label="Remove ${esc(k)}">${esc(k)} <span aria-hidden="true">×</span></button>`).join("");
+  $("stapleChips").innerHTML = STAPLES.map((n) =>
+    `<button class="cattab" data-staple="${esc(n)}" aria-pressed="${hasKitchen(n)}">${esc(n)}</button>`).join("");
+  $("ideaCook").innerHTML = [["quick", "Quick"], ["normal", "Normal"], ["cook", "I like to cook"]].map(([k, l]) => chip(l, "data-icook", k, ideaFilters.cook === k)).join("");
+  $("ideaHp").innerHTML = chip("High protein", "data-ihp", "1", ideaFilters.protein);
+  $("ideaCook").querySelectorAll("[data-icook]").forEach((b) => b.onclick = () => { ideaFilters.cook = b.dataset.icook; store.set("ideaCook", ideaFilters.cook); renderKitchen(); });
+  $("ideaHp").querySelector("[data-ihp]").onclick = () => { ideaFilters.protein = !ideaFilters.protein; store.set("ideaProtein", ideaFilters.protein ? "1" : "0"); renderKitchen(); };
+}
+
+function addKitchen(text) {
+  const parts = String(text || "").split(/[,\n]/).map((x) => x.trim()).filter(Boolean);
+  for (const t of parts) {
+    if (kitchen.length >= MAX_KITCHEN) { ideasMsg(`You can add up to ${MAX_KITCHEN} foods. Remove one first.`); break; }
+    if (!hasKitchen(t)) kitchen.push(t.replace(/\s+/g, " ").slice(0, 40));
+  }
+  kitchen = cleanKitchen(kitchen);
+  renderKitchen();
+}
+$("kitchenAdd").onclick = () => { ideasMsg(""); addKitchen($("kitchenIn").value); $("kitchenIn").value = ""; };
+$("kitchenIn").addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); $("kitchenAdd").click(); } });
+$("kitchenPills").addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-rm]");
+  if (b) { kitchen.splice(Number(b.dataset.rm), 1); ideasMsg(""); renderKitchen(); }
+});
+$("stapleChips").addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-staple]");
+  if (!b) return;
+  const n = b.dataset.staple;
+  if (hasKitchen(n)) kitchen = kitchen.filter((k) => k.toLowerCase() !== n.toLowerCase());
+  else addKitchen(n);
+  ideasMsg(""); renderKitchen();
+});
+
+async function ideasApi(action, extra = {}) {
+  const idToken = await user.getIdToken();
+  return postJSON("/.netlify/functions/kitchen-ideas", { idToken, action, items: kitchen, cook: ideaFilters.cook, highProtein: ideaFilters.protein, ...extra });
+}
+
+async function getIdeas(more) {
+  if ($("kitchenIn").value.trim()) { addKitchen($("kitchenIn").value); $("kitchenIn").value = ""; }
+  if (!user) return ideasMsg("Sign in with the button at the top to get ideas.");
+  if (!kitchen.length) return ideasMsg("Add at least one food first.");
+  if (ideas?.busy) return;
+  ideasMsg(""); $("banner").innerHTML = "";
+  const gen = more && ideas ? ideas : (ideas = { items: kitchen.slice(), list: [], busy: true });
+  gen.busy = true; renderIdeas();
+  try {
+    const r = await ideasApi("ideas", { avoid: gen.list.map((m) => m.title) });
+    gen.list.push(...r.ideas);
+  } catch (e) { banner("err", e.message || "Could not get ideas. Try again."); if (!gen.list.length) ideas = null; }
+  gen.busy = false;
+  renderIdeas();
+}
+$("goIdeas").onclick = () => getIdeas(false);
+
+function ideaCardHtml(i, m) {
+  const need = m.needs.length;
+  const tag = `Uses ${m.uses.length} of your ${ideas.items.length} ${ideas.items.length === 1 ? "food" : "foods"}${need ? `, needs ${need} more` : ", nothing else needed"}`;
+  let body = "";
+  if (m.open) {
+    if (m.loading) body = `<p class="note">Writing the recipe…</p>`;
+    else if (m.detail) {
+      const have = m.detail.ingredients.filter((x) => x.have), miss = m.detail.ingredients.filter((x) => !x.have);
+      const li = (x) => `<li>${esc(x.qty ? x.qty + " " : "")}${esc(x.name)}</li>`;
+      body = `<h4>You have</h4><ul class="ings">${have.map(li).join("") || "<li>Just the basics</li>"}</ul>
+        <h4>You need</h4>${miss.length ? `<ul class="ings">${miss.map(li).join("")}</ul>` : `<p class="note" style="margin:4px 0">Nothing else to buy.</p>`}
+        <h4>Recipe</h4><ol class="ings">${m.detail.steps.map((t) => `<li>${esc(t)}</li>`).join("")}</ol>
+        <small class="note" style="display:block">Check cook times and safe internal temperatures for meat, poultry, pork and fish.</small>`;
+      if (miss.length) {
+        if (m.cart?.items) {
+          const total = m.cart.items.reduce((t, x) => t + (x.product?.promoPrice || x.product?.price || 0), 0);
+          body += `<div style="margin-top:10px">${m.cart.items.map((x) => {
+            const p = x.product;
+            return `<div class="item ${p ? "" : "missing"}">${p?.image ? `<img src="${esc(p.image)}" alt="">` : `<div class="thumb"></div>`}
+              <div class="info"><b>${esc(p?.description || x.name)}</b><small>${esc(x.qty || "")}${p?.size ? " · " + esc(p.size) : ""}</small></div>
+              <div class="price">${p ? (money(p.promoPrice) || money(p.price) || "n/a") : "not found"}</div></div>`;
+          }).join("")}<div class="total"><span>Estimated total</span><span>${money(total)}</span></div>
+            <small class="note">Prices are live estimates from Kroger and can differ at checkout.</small>
+            <button class="btn primary block" data-iact="send" data-i="${i}" ${m.cart.sending ? "disabled" : ""}>${m.cart.sent ? "Sent to your cart" : m.cart.sending ? "Sending…" : "Send to my Kroger cart"}</button></div>`;
+        } else {
+          body += `<label for="zip${i}">ZIP code for Kroger prices</label>
+            <input id="zip${i}" type="text" inputmode="numeric" autocomplete="postal-code" placeholder="31088" value="${esc(store.get("zip") || "")}">
+            <button class="btn primary block" data-iact="prices" data-i="${i}" ${m.cart?.loading ? "disabled" : ""}>${m.cart?.loading ? "Looking up prices…" : "Get Kroger prices for missing items"}</button>`;
+        }
+      }
+    }
+  }
+  return `<div class="card idea">
+    <b>${esc(m.title)}</b>
+    <small class="note" style="display:block">${esc(m.summary)}</small>
+    <small class="note" style="display:block;margin-top:4px">${m.minutes} min · ${esc(tag)}</small>
+    ${body}
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">
+      <button class="btn ${m.open ? "ghost" : "primary"}" data-iact="recipe" data-i="${i}">${m.open ? "Hide recipe" : "Make it"}</button>
+      <button class="btn ghost" data-iact="save" data-i="${i}" ${m.saved || m.saving ? "disabled" : ""}>${m.saved ? "Saved" : m.saving ? "Saving…" : "Save"}</button>
+    </div>
+  </div>`;
+}
+
+function renderIdeas() {
+  renderKitchen();
+  $("goIdeas").disabled = !!ideas?.busy;
+  const box = $("ideasList");
+  if (!ideas) { box.innerHTML = ""; return; }
+  box.innerHTML = ideas.list.map((m, i) => ideaCardHtml(i, m)).join("") +
+    (ideas.busy ? `<div class="card"><p class="note" style="margin:0">Thinking up ideas…</p></div>`
+      : ideas.list.length ? `<button class="btn ghost block" data-iact="more">More ideas</button>` : "");
+}
+
+function detailBody(m) { return { meal: { title: m.title, summary: m.summary, uses: m.uses, needs: m.needs } }; }
+
+async function toggleIdea(i) {
+  const m = ideas.list[i];
+  if (m.open) { m.open = false; return renderIdeas(); }
+  m.open = true;
+  if (!m.detail) {
+    m.loading = true; renderIdeas();
+    try { m.detail = (await ideasApi("detail", detailBody(m))).detail; }
+    catch (e) { m.open = false; banner("err", e.message || "Could not write that recipe."); }
+    m.loading = false;
+  }
+  renderIdeas();
+}
+
+async function saveIdea(i) {
+  if (!user) return banner("err", "Sign in to save meals.");
+  const m = ideas.list[i];
+  m.saving = true; renderIdeas();
+  try {
+    if (!m.detail) m.detail = (await ideasApi("detail", detailBody(m))).detail;
+    // Saves only the title, ingredient names and amounts, and the recipe steps. No Kroger products or prices.
+    await api("save", { title: m.title, ingredients: m.detail.ingredients.map((x) => ({ name: x.name, qty: x.qty })), steps: m.detail.steps, servings: m.detail.servings, proteinPerServing: m.detail.proteinPerServing });
+    m.saved = true;
+    banner("ok", "Saved with its recipe. Find it under Saved meals on the Meals tab.");
+  } catch (e) { banner("err", e.message || "Could not save this meal."); }
+  m.saving = false;
+  renderIdeas();
+}
+
+async function ideaPrices(i) {
+  const m = ideas.list[i];
+  const zip = ($(`zip${i}`)?.value || "").trim();
+  if (!zip) return banner("err", "Enter your ZIP code first.");
+  store.set("zip", zip);
+  m.cart = { loading: true }; renderIdeas();
+  try {
+    const miss = m.detail.ingredients.filter((x) => !x.have).map((x) => ({ name: x.name, qty: x.qty }));
+    const r = await postJSON("/.netlify/functions/match-products", { ingredients: miss, zip });
+    m.cart = { items: r.items };
+  } catch (e) { m.cart = null; banner("err", e.message || "Could not look up prices."); }
+  renderIdeas();
+}
+
+async function ideaSend(i) {
+  if (!user) return banner("err", "Sign in first.");
+  const m = ideas.list[i];
+  const items = (m.cart?.items || []).filter((x) => x.product?.upc).map((x) => ({ upc: x.product.upc, quantity: 1 }));
+  if (!items.length) return banner("err", "No matched items to add.");
+  m.cart.sending = true; renderIdeas();
+  const idToken = await user.getIdToken();
+  try {
+    const r = await postJSON("/.netlify/functions/cart-add", { idToken, items });
+    m.cart.sent = true;
+    banner("ok", `Added ${r.added} items to your Kroger cart.`);
+  } catch (e) {
+    if (e.message === "not_connected") { location.href = `/.netlify/functions/kroger-auth-start?idToken=${encodeURIComponent(idToken)}`; return; }
+    banner("err", e.message || "Could not add to cart.");
+  }
+  m.cart.sending = false;
+  renderIdeas();
+}
+
+$("ideasList").addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-iact]");
+  if (!b || !ideas) return;
+  const i = Number(b.dataset.i), a = b.dataset.iact;
+  if (a === "more") getIdeas(true);
+  else if (a === "recipe") toggleIdea(i);
+  else if (a === "save") saveIdea(i);
+  else if (a === "prices") ideaPrices(i);
+  else if (a === "send") ideaSend(i);
+});
+renderIdeas();
 
 // ---- Helpers ----
 async function api(action, extra = {}) {
