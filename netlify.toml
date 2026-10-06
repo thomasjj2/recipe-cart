@@ -1,3 +1,11 @@
 [build]
   publish = "."
   functions = "netlify/functions"
+
+# Serve Firebase's sign-in handler from our own domain so Google sign-in
+# shows tryrecipecart.com instead of recipe-cart-a1164.firebaseapp.com
+[[redirects]]
+  from = "/__/auth/*"
+  to = "https://recipe-cart-a1164.firebaseapp.com/__/auth/:splat"
+  status = 200
+  force = true
