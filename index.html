@@ -89,13 +89,17 @@ footer a{color:var(--mute)}
 .pill{display:inline-flex;align-items:center;gap:8px;min-height:38px;padding:4px 12px;border:1.5px solid var(--accent);border-radius:999px;background:#fdf1e7;font:inherit;font-weight:600;color:var(--ink);cursor:pointer}
 .pill span{color:var(--mute);font-weight:400}
 .idea h4{margin:14px 0 2px;font-size:.95rem}
-.fbox{margin-top:12px;border:1.5px solid var(--line);border-radius:8px;padding:0 12px 12px}
+.fbox{margin-top:12px;border:1.5px solid var(--line);border-radius:8px;padding:0 12px}
+.fbox[open]{padding-bottom:12px}
 .fbox summary{min-height:44px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;font-weight:600;list-style:none}
 .fbox summary::-webkit-details-marker{display:none}
 .fbox summary::after{content:"Show";color:var(--accent);font-size:.85rem}
 .fbox[open] summary::after{content:"Hide"}
 .fsum{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:8px;font-size:.85rem;color:var(--mute)}
 .fsum button{background:none;border:0;color:var(--accent);font:inherit;font-weight:600;cursor:pointer;min-height:36px;padding:0 4px}
+.sv h4{margin:14px 0 4px;font-size:.95rem}
+.sv ul,.sv ol{margin:0;padding-left:20px}
+.sv li{margin:3px 0}
 .modal{position:fixed;inset:0;background:rgba(37,28,20,.6);z-index:20;display:flex;align-items:flex-end;justify-content:center}
 .modal .sheet{background:var(--bg);width:100%;max-width:560px;max-height:94vh;overflow:auto;border-radius:14px 14px 0 0;padding:16px 18px calc(18px + env(safe-area-inset-bottom))}
 .modal canvas{width:100%;height:auto;border-radius:10px;border:1px solid var(--line);display:block}
@@ -117,6 +121,7 @@ footer a{color:var(--mute)}
 </div>
 
 <section id="paneIdeas" role="tabpanel" aria-labelledby="tabIdeas">
+  <div id="sharedView" hidden></div>
   <div class="card">
     <b>What's in your kitchen?</b>
     <small class="note" style="display:block;margin:2px 0 8px">Type what you have. Separate foods with commas.</small>
@@ -229,6 +234,8 @@ footer a{color:var(--mute)}
       <input id="ownName" type="text" maxlength="60" placeholder="Sunday chicken and rice prep" autocomplete="off">
       <label for="ownIngs">Main ingredients, separated by commas</label>
       <input id="ownIngs" type="text" maxlength="200" placeholder="chicken, rice, broccoli" autocomplete="off">
+      <label for="ownNotes">Recipe notes (optional)</label>
+      <textarea id="ownNotes" maxlength="500" placeholder="2 lbs chicken thighs, marinate 30 min, bake at 400 for 25" style="min-height:84px"></textarea>
       <label>Pick an icon</label>
       <div class="emrow" id="ownEm"></div>
     </div>
@@ -263,7 +270,7 @@ const firebaseConfig = {   apiKey: "AIzaSyDRjr8mZpwsjBW1wTbGFJbiB5sS9acc4-s",
   appId: "1:479408777820:web:7ff84f540ee5cc604f9499" };
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
-let user = null, matched = null, parsed = null, savedLists = [], tab = "ideas", pendingFood = false;
+let user = null, matched = null, parsed = null, savedLists = [], tab = "ideas";
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const money = (n) => (n == null ? null : "$" + Number(n).toFixed(2));
@@ -508,7 +515,6 @@ onAuthStateChanged(auth, (u) => {
   $("who").textContent = u ? `Signed in as ${u.email || u.displayName || "you"}` : "Not signed in";
   $("signbtn").textContent = u ? "Sign out" : "Sign in";
   $("danger").hidden = !u;
-  if (u && pendingFood) { pendingFood = false; getIdeas(false); }
   if (tab === "build") loadLists();
   if (tab === "protein") loadPlanHome();
 });
@@ -1418,18 +1424,45 @@ $("ideasList").addEventListener("click", (ev) => {
 });
 renderIdeas();
 
-// A shared card links here with ?food=<main ingredient>. Add it, then run the search once the person is signed in.
-{
-  const f = cleanKitchen([qs.get("food")])[0];
-  if (f) { addKitchen(f); if (user) getIdeas(false); else { pendingFood = true; ideasMsg(`Sign in to get ideas for ${f}.`); } }
-}
-
 // ---- Share card ----
 // The card is drawn in this browser. A photo the person picks is used on this device only and is never uploaded.
 // No Kroger names, logos, products or prices ever appear on the card.
 const EMOJI_CHOICES = ["🍗", "🥗", "🍝", "🍚", "🥩", "🍳", "🌮", "🍲"];
 let share = null; // { own, title, emoji, ingredients, stats, food, photo, photoUrl }
-const shareLink = (food) => `${location.origin}/${food ? "?food=" + encodeURIComponent(food) : ""}`;
+// The recipe travels inside the link (compressed, then made URL safe). Nothing is stored on a server.
+const toB64u = (u8) => { let s = ""; for (const b of u8) s += String.fromCharCode(b); return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); };
+const fromB64u = (t) => { const s = atob(t.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (t.length % 4)) % 4)); return Uint8Array.from(s, (c) => c.charCodeAt(0)); };
+async function packRecipe(obj) {
+  const raw = new TextEncoder().encode(JSON.stringify(obj));
+  try {
+    if (typeof CompressionStream === "function") {
+      const out = new Blob([raw]).stream().pipeThrough(new CompressionStream("deflate-raw"));
+      return "1" + toB64u(new Uint8Array(await new Response(out).arrayBuffer()));
+    }
+  } catch {}
+  return "0" + toB64u(raw);
+}
+async function unpackRecipe(tok) {
+  let bytes = fromB64u(tok.slice(1));
+  if (tok[0] === "1") {
+    if (typeof DecompressionStream !== "function") return null;
+    const out = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+    bytes = new Uint8Array(await new Response(out).arrayBuffer());
+  } else if (tok[0] !== "0") return null;
+  if (bytes.length > 20000) return null;
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
+const cutText = (s, n) => (s.length <= n ? s : s.slice(0, n - 1).replace(/\s+\S*$/, "") + "…");
+async function buildShareLink(s) {
+  const o = { t: s.title, e: s.emoji, i: s.full || s.ingredients, s: [...(s.steps || [])], n: s.notes || "", m: s.minutes || 0, p: s.protein || 0, c: s.calories || 0 };
+  let tok = await packRecipe(o), trimmed = false;
+  while (tok.length > 1800 && (o.s.length || o.n)) {
+    trimmed = true;
+    if (o.s.length) o.s.pop(); else o.n = o.n.slice(0, Math.max(0, o.n.length - 100));
+    tok = await packRecipe(o);
+  }
+  return { link: `${location.origin}/?r=${tok}`, trimmed };
+}
 const shareMsg = (t) => { $("shareMsg").textContent = t || ""; };
 
 function roundRect(ctx, x, y, w, h, r) {
@@ -1494,7 +1527,7 @@ async function drawShareCard() {
   ctx.save(); ctx.translate(M, 1208); ctx.scale(2.6, 2.6); ctx.fillStyle = "#3E7D4F";
   ctx.fill(new Path2D("M20 3C10 3 4 8 4 15c0 2 .6 3.6 1.5 4.7C7 14 11 10.5 16 9c-4 2.5-7 6-8.5 11C16 20.5 20 14 20 3z")); ctx.restore();
   ctx.fillStyle = "#DB621F"; ctx.font = '800 56px "Fraunces", Georgia, serif'; ctx.fillText("Recipe Cart", M + 70, 1262);
-  ctx.fillStyle = "#251C14"; ctx.font = sans(600, 34); ctx.fillText(shareLink(share.food).replace(/^https?:\/\//, ""), M, 1316);
+  ctx.fillStyle = "#251C14"; ctx.font = sans(600, 34); ctx.fillText(location.host, M, 1316);
 }
 
 let shareTimer = null;
@@ -1508,7 +1541,7 @@ function showShare() {
   $("shareTitle").textContent = share.own ? "Share my own meal" : "Share my version";
   $("rmPhoto").hidden = !share.photo;
   shareMsg("");
-  if (share.own) { $("ownName").value = ""; $("ownIngs").value = ""; renderOwnEmoji(); }
+  if (share.own) { $("ownName").value = ""; $("ownIngs").value = ""; $("ownNotes").value = ""; renderOwnEmoji(); }
   $("shareModal").hidden = false;
   document.body.style.overflow = "hidden";
   drawShareCard();
@@ -1527,20 +1560,24 @@ function openShare(i) {
   share = {
     own: false, title: m.title, emoji: m.emoji || "🍽️", ingredients: ing.slice(0, 5),
     stats: [`${m.minutes} min`, m.protein ? `≈${m.protein}g protein` : "", m.calories ? `≈${m.calories} cal` : ""].filter(Boolean),
-    food: (m.uses && m.uses[0]) || ing[0] || "", photo: null, photoUrl: null,
+    full: m.detail.ingredients.map((x) => cutText([x.qty, x.name].filter(Boolean).join(" "), 80)).slice(0, 14),
+    steps: m.detail.steps.map((x) => cutText(x, 260)).slice(0, 10), notes: "",
+    minutes: m.minutes, protein: m.protein || 0, calories: m.calories || 0,
+    photo: null, photoUrl: null,
   };
   showShare();
 }
 $("shareOwn").onclick = () => {
-  share = { own: true, title: "", emoji: EMOJI_CHOICES[0], ingredients: [], stats: [], food: "", photo: null, photoUrl: null };
+  share = { own: true, title: "", emoji: EMOJI_CHOICES[0], ingredients: [], full: [], stats: [], steps: [], notes: "", photo: null, photoUrl: null };
   showShare();
 };
 $("ownName").addEventListener("input", () => { share.title = $("ownName").value.trim().slice(0, 60); redrawSoon(); });
 $("ownIngs").addEventListener("input", () => {
-  share.ingredients = cleanKitchen($("ownIngs").value.split(",")).slice(0, 5);
-  share.food = share.ingredients[0] || "";
+  share.full = cleanKitchen($("ownIngs").value.split(",")).slice(0, 12);
+  share.ingredients = share.full.slice(0, 5);
   redrawSoon();
 });
+$("ownNotes").addEventListener("input", () => { share.notes = $("ownNotes").value.replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim().slice(0, 500); });
 $("ownEm").addEventListener("click", (ev) => {
   const b = ev.target.closest("[data-em]");
   if (!b) return;
@@ -1582,14 +1619,68 @@ $("doShare").onclick = async () => {
   const blob = await shareBlob();
   if (!blob) return;
   const file = new File([blob], "recipe-cart-card.png", { type: "image/png" });
+  const { link, trimmed } = await buildShareLink(share);
+  if (trimmed) shareMsg("That recipe was long, so the link holds a shortened version.");
+  const lead = share.own && !share.notes ? "See what is in it" : "See the recipe";
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
-    try { await navigator.share({ files: [file], text: `${share.title || "My meal"}, made with Recipe Cart: ${shareLink(share.food)}` }); }
+    try { await navigator.share({ files: [file], text: `${share.title || "My meal"}, made with Recipe Cart. ${lead}: ${link}` }); }
     catch (e) { if (e.name !== "AbortError") shareMsg("Sharing did not work. Tap Save image instead."); }
-  } else { saveBlob(blob); shareMsg("Saved to your device. Post it from there."); }
+  } else {
+    saveBlob(blob);
+    try { await navigator.clipboard.writeText(link); shareMsg("Saved the image and copied the link. Post both."); }
+    catch { shareMsg("Saved to your device. Post it from there."); }
+  }
 };
 $("shareClose").onclick = closeShare;
 $("shareModal").addEventListener("click", (ev) => { if (ev.target === $("shareModal")) closeShare(); });
 document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && share) closeShare(); });
+
+// ---- Shared link landing ----
+// A shared link carries the meal inside ?r=. It is shown as plain text only, and opening it never runs a search.
+function cleanShared(o) {
+  if (!o || typeof o !== "object") return null;
+  const t = (v, n) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
+  const list = (a, max, n) => (Array.isArray(a) ? a : []).map((x) => t(x, n)).filter(Boolean).slice(0, max);
+  const num = (v, max) => { const n = Math.round(Number(v)); return Number.isFinite(n) && n > 0 && n <= max ? n : null; };
+  const title = t(o.t, 80);
+  if (!title) return null;
+  return {
+    title,
+    emoji: /\p{Extended_Pictographic}/u.test(String(o.e || "")) ? t(o.e, 8) : "",
+    ingredients: list(o.i, 14, 80), steps: list(o.s, 10, 300),
+    notes: String(o.n ?? "").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim().slice(0, 500),
+    minutes: num(o.m, 240), protein: num(o.p, 300), calories: num(o.c, 3000),
+  };
+}
+function renderSharedView(d) {
+  const stats = d ? [d.minutes ? `${d.minutes} min` : "", d.protein ? `≈${d.protein}g protein` : "", d.calories ? `≈${d.calories} cal` : ""].filter(Boolean).join(" · ") : "";
+  const recipe = d ? `<div class="card sv">
+      <small class="note" style="display:block">Shared with Recipe Cart</small>
+      <b style="font-family:'Fraunces',Georgia,serif;font-size:1.3rem;display:block;margin-top:2px">${d.emoji ? esc(d.emoji) + " " : ""}${esc(d.title)}</b>
+      ${stats ? `<small class="note" style="display:block;margin-top:4px">${esc(stats)}</small>` : ""}
+      ${d.ingredients.length ? `<h4>Ingredients</h4><ul>${d.ingredients.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}
+      ${d.steps.length ? `<h4>Steps</h4><ol>${d.steps.map((x) => `<li>${esc(x)}</li>`).join("")}</ol>` : ""}
+      ${d.notes ? `<h4>Recipe notes</h4><p style="margin:0;white-space:pre-wrap">${esc(d.notes)}</p>` : ""}
+      <small class="note" style="display:block;margin-top:12px">Shared by a Recipe Cart user. Check cooking times and food safety before you cook.</small>
+    </div>` : "";
+  $("sharedView").innerHTML = `${recipe}<div class="card" style="background:#fdf1e7;border-color:var(--accent)">
+      <b>Start using Recipe Cart to find ideas for your next meal.</b>
+      <small class="note" style="display:block;margin:4px 0 8px">Add what is in your kitchen below, then tap Get ideas.</small>
+      <button class="btn primary block" id="sharedStart" style="margin-top:0">Add my foods</button>
+      <button class="btn ghost block" id="sharedHide">Hide this</button>
+    </div>`;
+  $("sharedView").hidden = false;
+  $("sharedStart").onclick = () => { $("kitchenIn").scrollIntoView({ behavior: "smooth", block: "center" }); $("kitchenIn").focus(); };
+  $("sharedHide").onclick = () => { $("sharedView").hidden = true; $("sharedView").innerHTML = ""; };
+}
+(async function initSharedLanding() {
+  const tok = qs.get("r");
+  let d = null;
+  if (tok && tok.length <= 3000 && /^[01][A-Za-z0-9_-]+$/.test(tok)) {
+    try { d = cleanShared(await unpackRecipe(tok)); } catch { d = null; }
+  }
+  if (d || tok || qs.get("food")) renderSharedView(d);
+})();
 
 // ---- Helpers ----
 async function api(action, extra = {}) {
