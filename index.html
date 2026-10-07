@@ -236,6 +236,8 @@ footer a{color:var(--mute)}
       <input id="ownIngs" type="text" maxlength="200" placeholder="chicken, rice, broccoli" autocomplete="off">
       <label for="ownNotes">Recipe notes (optional)</label>
       <textarea id="ownNotes" maxlength="500" placeholder="2 lbs chicken thighs, marinate 30 min, bake at 400 for 25" style="min-height:84px"></textarea>
+    </div>
+    <div id="iconRow" hidden>
       <label>Pick an icon</label>
       <div class="emrow" id="ownEm"></div>
     </div>
@@ -244,7 +246,6 @@ footer a{color:var(--mute)}
     <div class="actions">
       <button class="btn primary" id="doShare">Share</button>
       <button class="btn ghost" id="pickPhoto">Add my photo</button>
-      <button class="btn ghost" id="doDownload">Save image</button>
       <button class="btn ghost" id="rmPhoto" hidden>Remove photo</button>
     </div>
     <small class="note" id="shareMsg" role="status" style="display:block;margin-top:8px;color:var(--bad)"></small>
@@ -911,6 +912,7 @@ async function loadLists() {
         <div class="actions">
           <button class="btn primary" data-act="price" data-id="${esc(l.id)}">Get prices</button>
           ${l.servings ? "" : `<button class="btn ghost" data-act="nutrition" data-id="${esc(l.id)}">Add nutrition info</button>`}
+          <button class="btn ghost" data-act="share" data-id="${esc(l.id)}">Share</button>
           <button class="btn ghost" data-act="copy" data-id="${esc(l.id)}">Copy</button>
           <button class="btn ghost" data-act="download" data-id="${esc(l.id)}">Download</button>
           <button class="btn danger" data-act="delete" data-id="${esc(l.id)}">Delete</button>
@@ -931,6 +933,7 @@ $("lists").addEventListener("click", async (ev) => {
   const act = btn.dataset.act;
   if (act === "price") return priceList(l);
   if (act === "nutrition") return addNutrition(l, btn);
+  if (act === "share") return openShareSaved(l);
   if (act === "copy") return copyList(l);
   if (act === "download") return downloadList(l);
   if (act === "delete") {
@@ -1486,10 +1489,21 @@ function wrapLines(ctx, text, maxW, maxLines) {
 }
 
 async function drawShareCard() {
-  const c = $("shareCanvas"), ctx = c.getContext("2d"), W = 1080, H = 1350, M = 72, TOP = 560;
+  const c = $("shareCanvas"), W = 1080, M = 72, TOP = 560;
   const serif = '800 76px "Fraunces", Georgia, serif', sans = (w, px) => `${w} ${px}px "Bricolage Grotesque", system-ui, sans-serif`;
   try { await Promise.all([document.fonts.load(serif), document.fonts.load(sans(600, 34)), document.fonts.load(sans(400, 38))]); } catch {}
-  ctx.clearRect(0, 0, W, H);
+  let ctx = c.getContext("2d");
+  // Measure first, so the card is only as tall as its content needs (a square at minimum).
+  ctx.font = serif;
+  const tl = wrapLines(ctx, share.title || "My meal", W - 2 * M, 2);
+  ctx.font = sans(400, 38);
+  const il = share.ingredients.length ? wrapLines(ctx, share.ingredients.join(", "), W - 2 * M, 3) : [];
+  const pillsY = TOP + 116 + (tl.length - 1) * 86 + 40;
+  const ingY = pillsY + (share.stats.length ? 100 : 0);
+  const contentEnd = il.length ? ingY + 38 + (il.length - 1) * 52 + 14 : ingY;
+  const H = Math.min(1350, Math.max(1080, contentEnd + 60 + 160));
+  c.width = W; c.height = H; // resizing clears the canvas
+  ctx = c.getContext("2d");
   ctx.fillStyle = "#FAF6EE"; ctx.fillRect(0, 0, W, H);
   if (share.photo) {
     const img = share.photo, s = Math.max(W / img.width, TOP / img.height), dw = img.width * s, dh = img.height * s;
@@ -1502,46 +1516,51 @@ async function drawShareCard() {
   }
   ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
   ctx.fillStyle = "#251C14"; ctx.font = serif;
-  let y = TOP + 116;
-  const tl = wrapLines(ctx, share.title || "My meal", W - 2 * M, 2);
-  tl.forEach((l, i) => ctx.fillText(l, M, y + i * 86));
-  y += (tl.length - 1) * 86 + 40;
+  tl.forEach((l, i) => ctx.fillText(l, M, TOP + 116 + i * 86));
   if (share.stats.length) {
     ctx.font = sans(600, 34);
     let x = M;
     for (const s of share.stats) {
       const w = ctx.measureText(s).width + 44;
       if (x + w > W - M) break;
-      roundRect(ctx, x, y, w, 64, 32); ctx.fillStyle = "#FDF1E7"; ctx.fill();
+      roundRect(ctx, x, pillsY, w, 64, 32); ctx.fillStyle = "#FDF1E7"; ctx.fill();
       ctx.strokeStyle = "#DB621F"; ctx.lineWidth = 3; ctx.stroke();
-      ctx.fillStyle = "#251C14"; ctx.fillText(s, x + 22, y + 43);
+      ctx.fillStyle = "#251C14"; ctx.fillText(s, x + 22, pillsY + 43);
       x += w + 14;
     }
-    y += 100;
   }
-  if (share.ingredients.length) {
+  if (il.length) {
     ctx.fillStyle = "#7a6f5c"; ctx.font = sans(400, 38);
-    wrapLines(ctx, share.ingredients.join(", "), W - 2 * M, 3).forEach((l, i) => ctx.fillText(l, M, y + 38 + i * 52));
+    il.forEach((l, i) => ctx.fillText(l, M, ingY + 38 + i * 52));
   }
-  ctx.fillStyle = "#DB621F"; ctx.fillRect(M, 1190, W - 2 * M, 4);
-  ctx.save(); ctx.translate(M, 1208); ctx.scale(2.6, 2.6); ctx.fillStyle = "#3E7D4F";
+  const FT = H - 160;
+  ctx.fillStyle = "#DB621F"; ctx.fillRect(M, FT, W - 2 * M, 4);
+  ctx.save(); ctx.translate(M, FT + 18); ctx.scale(2.6, 2.6); ctx.fillStyle = "#3E7D4F";
   ctx.fill(new Path2D("M20 3C10 3 4 8 4 15c0 2 .6 3.6 1.5 4.7C7 14 11 10.5 16 9c-4 2.5-7 6-8.5 11C16 20.5 20 14 20 3z")); ctx.restore();
-  ctx.fillStyle = "#DB621F"; ctx.font = '800 56px "Fraunces", Georgia, serif'; ctx.fillText("Recipe Cart", M + 70, 1262);
-  ctx.fillStyle = "#251C14"; ctx.font = sans(600, 34); ctx.fillText(location.host, M, 1316);
+  ctx.fillStyle = "#DB621F"; ctx.font = '800 56px "Fraunces", Georgia, serif'; ctx.fillText("Recipe Cart", M + 70, FT + 72);
+  ctx.fillStyle = "#251C14"; ctx.font = sans(600, 34); ctx.fillText(location.host, M, FT + 126);
 }
 
 let shareTimer = null;
 const redrawSoon = () => { clearTimeout(shareTimer); shareTimer = setTimeout(drawShareCard, 200); };
 
 function renderOwnEmoji() {
-  $("ownEm").innerHTML = EMOJI_CHOICES.map((e) => `<button aria-pressed="${share.emoji === e}" data-em="${e}" aria-label="Icon ${e}">${e}</button>`).join("");
+  const choices = share.saved ? ["🍽️", ...EMOJI_CHOICES] : EMOJI_CHOICES;
+  $("ownEm").innerHTML = choices.map((e) => `<button aria-pressed="${share.emoji === e}" data-em="${e}" aria-label="Icon ${e}">${e}</button>`).join("");
+}
+function syncPhotoButtons() {
+  $("rmPhoto").hidden = !share.photo;
+  $("pickPhoto").textContent = share.photo ? "Change photo" : "Add my photo";
+  $("pickPhoto").style.gridColumn = share.photo ? "" : "1 / -1";
 }
 function showShare() {
   $("ownFields").hidden = !share.own;
-  $("shareTitle").textContent = share.own ? "Share my own meal" : "Share my version";
-  $("rmPhoto").hidden = !share.photo;
+  $("iconRow").hidden = !(share.own || share.saved);
+  $("shareTitle").textContent = share.own ? "Share my own meal" : share.saved ? "Share this recipe" : "Share my version";
+  syncPhotoButtons();
   shareMsg("");
-  if (share.own) { $("ownName").value = ""; $("ownIngs").value = ""; $("ownNotes").value = ""; renderOwnEmoji(); }
+  if (share.own) { $("ownName").value = ""; $("ownIngs").value = ""; $("ownNotes").value = ""; }
+  if (share.own || share.saved) renderOwnEmoji();
   $("shareModal").hidden = false;
   document.body.style.overflow = "hidden";
   drawShareCard();
@@ -1564,6 +1583,17 @@ function openShare(i) {
     steps: m.detail.steps.map((x) => cutText(x, 260)).slice(0, 10), notes: "",
     minutes: m.minutes, protein: m.protein || 0, calories: m.calories || 0,
     photo: null, photoUrl: null,
+  };
+  showShare();
+}
+function openShareSaved(l) {
+  share = {
+    own: false, saved: true, title: cutText(String(l.title || "My meal"), 80), emoji: "🍽️",
+    ingredients: l.ingredients.map((x) => x.name).slice(0, 5),
+    full: l.ingredients.map((x) => cutText([x.qty, x.name].filter(Boolean).join(" "), 80)).slice(0, 14),
+    steps: (l.steps || []).map((x) => cutText(String(x), 260)).slice(0, 10), notes: "",
+    stats: l.servings && l.proteinPerServing != null ? [`≈${l.proteinPerServing}g protein`] : [],
+    protein: l.proteinPerServing || 0, photo: null, photoUrl: null,
   };
   showShare();
 }
@@ -1592,14 +1622,14 @@ $("sharePhoto").onchange = () => {
   img.onload = () => {
     if (!share) return URL.revokeObjectURL(url);
     if (share.photoUrl) URL.revokeObjectURL(share.photoUrl);
-    share.photo = img; share.photoUrl = url; $("rmPhoto").hidden = false; shareMsg(""); drawShareCard();
+    share.photo = img; share.photoUrl = url; syncPhotoButtons(); shareMsg(""); drawShareCard();
   };
   img.onerror = () => { URL.revokeObjectURL(url); shareMsg("Could not read that photo. Try a different one."); };
   img.src = url;
 };
 $("rmPhoto").onclick = () => {
   if (share.photoUrl) URL.revokeObjectURL(share.photoUrl);
-  share.photo = null; share.photoUrl = null; $("rmPhoto").hidden = true; drawShareCard();
+  share.photo = null; share.photoUrl = null; syncPhotoButtons(); drawShareCard();
 };
 async function shareBlob() {
   if (share.own && !share.title.trim()) { shareMsg("Add a meal name first."); return null; }
@@ -1614,7 +1644,6 @@ function saveBlob(blob) {
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
-$("doDownload").onclick = async () => { const b = await shareBlob(); if (b) saveBlob(b); };
 $("doShare").onclick = async () => {
   const blob = await shareBlob();
   if (!blob) return;
