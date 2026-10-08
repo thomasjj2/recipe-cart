@@ -1,4 +1,4 @@
-// POST { ingredients: [{name, qty}], zip } -> { locationId, items: [{ name, qty, product }] }
+// POST { ingredients: [{name, qty}], zip or locationId } -> { locationId, items: [{ name, qty, product }] }
 // Live lookup only — nothing here is stored server-side.
 const { searchProducts, findNearestLocation } = require("./_kroger");
 
@@ -10,7 +10,9 @@ exports.handler = async (event) => {
 
   try {
     let locationId = null;
-    if (b.zip) {
+    if (/^[A-Za-z0-9]{3,20}$/.test(String(b.locationId || ""))) {
+      locationId = String(b.locationId); // a store the user already picked, so no location lookup is needed
+    } else if (b.zip) {
       const loc = await findNearestLocation(String(b.zip).slice(0, 10));
       locationId = loc?.locationId || null;
     }
