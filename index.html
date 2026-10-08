@@ -577,6 +577,20 @@ $("findStores").onclick = async () => {
 
 const signIn = () => signInWithPopup(auth, new GoogleAuthProvider()).catch((e) => banner("err", e.message || "Could not sign in."));
 
+// Sign in only when someone taps something that needs an account, then carry on with what they asked for.
+// It has to start straight from the tap, or phone browsers block the popup.
+async function ensureUser() {
+  if (user) return true;
+  try {
+    user = (await signInWithPopup(auth, new GoogleAuthProvider())).user;
+    return true;
+  } catch (e) {
+    if (e.code === "auth/popup-blocked") banner("err", "Your browser blocked the sign-in window. Allow popups, then tap again.");
+    else if (e.code !== "auth/popup-closed-by-user" && e.code !== "auth/cancelled-popup-request") banner("err", e.message || "Could not sign in.");
+    return false;
+  }
+}
+
 onAuthStateChanged(auth, (u) => {
   user = u;
   $("who").textContent = u ? `Signed in as ${u.email || u.displayName || "you"}` : "Not signed in";
@@ -662,7 +676,7 @@ function renderList(title, items, { canSave, servings, protein }) {
 }
 
 async function sendToCart() {
-  if (!user) { banner("err", "Sign in first."); return; }
+  if (!(await ensureUser())) return;
   const idToken = await user.getIdToken();
   const items = matched.items.filter((i) => i.product?.upc).map((i) => ({ upc: i.product.upc, quantity: 1 }));
   if (!items.length) return banner("err", "No matched items to add.");
@@ -741,7 +755,7 @@ function renderHomePlan(r) {
       ${planFoods.length ? `<button class="btn primary block" id="getMeals" style="margin-top:12px">Get a week of meal ideas from this plan</button>` : ""}
     </div>`;
   if ($("getMeals")) $("getMeals").onclick = async () => {
-    if (!user) return banner("err", "Sign in with the button at the top to get meal ideas.");
+    if (!(await ensureUser())) return;
     // Planning counts toward the weekly streak. Saves only the target, food names, and the path. No store data.
     plansApi("record", { mode: "home", goal: lastRequest?.goal || r.goal, target: lastRequest?.target || 0, calories: lastRequest?.calories || 0, preferences: lastRequest?.preferences || [] })
       .then(renderPlanHome).catch(() => {});
@@ -838,14 +852,14 @@ function renderProteinPlan(r, repriceFrom) {
     };
   });
 
-  if ($("getMeals")) $("getMeals").onclick = () => {
-    if (!user) return banner("err", "Sign in with the button at the top to get meal ideas.");
+  if ($("getMeals")) $("getMeals").onclick = async () => {
+    if (!(await ensureUser())) return;
     setTab("build");
     startMeals();
   };
 
   $("addFullPlan").onclick = async () => {
-    if (!user) return banner("err", "Sign in first.");
+    if (!(await ensureUser())) return;
     const idToken = await user.getIdToken();
     const items = v.plan.filter((p) => p.packages && p.product?.upc).map((p) => ({ upc: p.product.upc, quantity: p.packages }));
     if (!items.length) return banner("err", "Nothing to add yet.");
@@ -938,7 +952,7 @@ function renderPlanHome(s) {
 
 // Saves ONLY the title, ingredient names and quantities, servings, and estimated protein. No Kroger products or prices.
 async function saveList() {
-  if (!user) return banner("err", "Sign in to save lists.");
+  if (!(await ensureUser())) return;
   const btn = $("saveList");
   btn.disabled = true;
   try {
@@ -1107,8 +1121,8 @@ async function mealApi(action, extra = {}) {
   });
 }
 
-function startMeals() {
-  if (!user) return banner("err", "Sign in with the button at the top to get meal ideas.");
+async function startMeals() {
+  if (!(await ensureUser())) return;
   if (!planFoods.length) return;
   $("banner").innerHTML = "";
   meals = { foods: planFoods.slice(), alsoHave: planExtras.slice(), focus: mealSettings.focus, days: Array.from({ length: 7 }, () => ({ status: "loading", meals: [] })) };
@@ -1162,7 +1176,7 @@ async function swapMeal(di, mi) {
 }
 
 async function saveMeal(di, mi) {
-  if (!user) return banner("err", "Sign in to save meals.");
+  if (!(await ensureUser())) return;
   const gen = meals, m = gen.days[di].meals[mi];
   m.saving = true; renderMeals();
   try {
@@ -1436,10 +1450,10 @@ async function ideasApi(action, extra = {}) {
 async function getIdeas(more, scratch) {
   const sc = !!scratch || !!(more && ideas && ideas.scratch);
   if (!sc && $("kitchenIn").value.trim()) { addKitchen($("kitchenIn").value); $("kitchenIn").value = ""; }
-  if (!user) return ideasMsg("Sign in with the button at the top to get ideas.");
   if (!sc && !kitchen.length) return ideasMsg("Add at least one food first, or switch to I want a dish.");
   const dish = sc ? (more && ideas ? ideas.dish || "" : cleanDish($("dishIn").value)) : "";
   if (sc && !dish) return ideasMsg("Type a dish first, like teriyaki chicken or salsa.");
+  if (!(await ensureUser())) return;
   if (ideas?.busy) return;
   ideasMsg(""); $("banner").innerHTML = "";
   const gen = more && ideas ? ideas : (ideas = { items: sc ? [] : kitchen.slice(), scratch: sc, dish, list: [], busy: true });
@@ -1533,7 +1547,7 @@ async function toggleIdea(i) {
 }
 
 async function saveIdea(i) {
-  if (!user) return banner("err", "Sign in to save meals.");
+  if (!(await ensureUser())) return;
   const m = ideas.list[i];
   m.saving = true; renderIdeas();
   try {
@@ -1562,7 +1576,7 @@ async function ideaPrices(i) {
 }
 
 async function ideaSend(i) {
-  if (!user) return banner("err", "Sign in first.");
+  if (!(await ensureUser())) return;
   const m = ideas.list[i];
   const items = (m.cart?.items || []).filter((x) => x.product?.upc).map((x) => ({ upc: x.product.upc, quantity: 1 }));
   if (!items.length) return banner("err", "No matched items to add.");
