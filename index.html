@@ -167,9 +167,9 @@ details.saved .meta{margin-top:2px}
 <section id="paneIdeas" role="tabpanel" aria-labelledby="tabIdeas">
   <div id="sharedView" hidden></div>
   <div class="card">
-    <div class="modeseg" role="group" aria-label="What do you have">
+    <div class="modeseg" role="group" aria-label="How do you want ideas">
       <button class="cattab" id="modeHave" aria-pressed="true">I have food</button>
-      <button class="cattab" id="modeEmpty" aria-pressed="false">Fridge is empty</button>
+      <button class="cattab" id="modeEmpty" aria-pressed="false">I want a dish</button>
     </div>
     <div id="haveBox">
     <b>What's in your kitchen?</b>
@@ -182,7 +182,12 @@ details.saved .meta{margin-top:2px}
     <label>Tap to add common foods</label>
     <div id="stapleChips" class="pills" style="margin-top:0"></div>
     </div>
-    <p class="note" id="emptyNote" hidden style="margin:0 0 4px">No food needed. We plan cheap meals from scratch and show what you would buy.</p>
+    <div id="dishBox" hidden>
+    <b>What are you craving?</b>
+    <small class="note" style="display:block;margin:2px 0 8px">Name a dish or food and we build meals around it. No food needed, we show what you would buy.</small>
+    <input id="dishIn" type="text" maxlength="60" placeholder="teriyaki chicken, salsa, tacos" autocomplete="off">
+    <div id="dishChips" class="pills"></div>
+    </div>
     <div id="storeLine" class="fsum"></div>
     <div id="storeBox" hidden>
       <div style="display:flex;gap:8px;margin-top:8px">
@@ -1301,8 +1306,9 @@ function renderKitchen() {
   $("filterSummary").hidden = !on.length;
   $("filterSummary").innerHTML = on.length ? `<span>Filters: ${on.join(", ")}</span><button id="clearFilters">Clear</button>` : "";
   $("modeHave").setAttribute("aria-pressed", String(!emptyMode)); $("modeEmpty").setAttribute("aria-pressed", String(emptyMode));
-  $("haveBox").hidden = emptyMode; $("emptyNote").hidden = !emptyMode;
-  $("goIdeas").textContent = emptyMode ? "Plan me a cheap meal" : "Get ideas";
+  $("haveBox").hidden = emptyMode; $("dishBox").hidden = !emptyMode;
+  $("dishChips").innerHTML = DISH_EXAMPLES.map((n) => `<button class="cattab" data-dish="${esc(n)}">${esc(n)}</button>`).join("");
+  $("goIdeas").textContent = emptyMode ? "Plan meals with this dish" : "Get ideas";
   renderStoreLine();
   $("histRow").hidden = !ideaHistory.length;
   $("histRow").innerHTML = ideaHistory.length ? `<span>${ideaHistory.length} meals remembered on this device, so you do not see repeats</span><button id="clearHist">Clear</button>` : "";
@@ -1339,6 +1345,16 @@ $("stapleChips").addEventListener("click", (ev) => {
 });
 
 let emptyMode = store.get("ideaMode") === "empty";
+const DISH_EXAMPLES = ["Teriyaki chicken", "Salsa", "Tacos", "Fried rice", "Chili"];
+const cleanDish = (v) => String(v || "").replace(/\s+/g, " ").trim().slice(0, 60);
+$("dishIn").value = cleanDish(store.get("ideaDish"));
+$("dishIn").addEventListener("input", () => { ideasMsg(""); store.set("ideaDish", cleanDish($("dishIn").value)); });
+$("dishIn").addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); $("goIdeas").click(); } });
+$("dishChips").addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-dish]");
+  if (!b) return;
+  $("dishIn").value = b.dataset.dish; store.set("ideaDish", b.dataset.dish); ideasMsg(""); $("dishIn").focus();
+});
 // ---- Variety memory: meal titles shown before stay on this device and are sent as the avoid list ----
 const HIST_MAX = 80;
 let ideaHistory = [];
@@ -1414,17 +1430,19 @@ $("modeEmpty").onclick = () => { emptyMode = true; store.set("ideaMode", "empty"
 
 async function ideasApi(action, extra = {}) {
   const idToken = await user.getIdToken();
-  return postJSON("/.netlify/functions/kitchen-ideas", { idToken, action, items: ideas && ideas.scratch ? [] : kitchen, scratch: !!(ideas && ideas.scratch), cook: ideaFilters.cook, minProtein: ideaFilters.minProtein, maxCalories: ideaFilters.maxCal, budget: ideaFilters.budget, ...extra });
+  return postJSON("/.netlify/functions/kitchen-ideas", { idToken, action, items: ideas && ideas.scratch ? [] : kitchen, scratch: !!(ideas && ideas.scratch), dish: ideas && ideas.scratch ? ideas.dish || "" : "", cook: ideaFilters.cook, minProtein: ideaFilters.minProtein, maxCalories: ideaFilters.maxCal, budget: ideaFilters.budget, ...extra });
 }
 
 async function getIdeas(more, scratch) {
   const sc = !!scratch || !!(more && ideas && ideas.scratch);
   if (!sc && $("kitchenIn").value.trim()) { addKitchen($("kitchenIn").value); $("kitchenIn").value = ""; }
   if (!user) return ideasMsg("Sign in with the button at the top to get ideas.");
-  if (!sc && !kitchen.length) return ideasMsg("Add at least one food first, or switch to Fridge is empty.");
+  if (!sc && !kitchen.length) return ideasMsg("Add at least one food first, or switch to I want a dish.");
+  const dish = sc ? (more && ideas ? ideas.dish || "" : cleanDish($("dishIn").value)) : "";
+  if (sc && !dish) return ideasMsg("Type a dish first, like teriyaki chicken or salsa.");
   if (ideas?.busy) return;
   ideasMsg(""); $("banner").innerHTML = "";
-  const gen = more && ideas ? ideas : (ideas = { items: sc ? [] : kitchen.slice(), scratch: sc, list: [], busy: true });
+  const gen = more && ideas ? ideas : (ideas = { items: sc ? [] : kitchen.slice(), scratch: sc, dish, list: [], busy: true });
   gen.busy = true; renderIdeas();
   try {
     const r = await ideasApi("ideas", { avoid: avoidList(gen) });
@@ -1438,7 +1456,7 @@ $("goIdeas").onclick = () => getIdeas(false, emptyMode);
 
 function ideaCardHtml(i, m) {
   const need = m.needs.length;
-  const tag = ideas.scratch ? `From scratch, ${need} ${need === 1 ? "item" : "items"} to buy` : `Uses ${m.uses.length} of your ${ideas.items.length} ${ideas.items.length === 1 ? "food" : "foods"}${need ? `, needs ${need} more` : ", nothing else needed"}`;
+  const tag = ideas.scratch ? `${ideas.dish ? "Built around " + ideas.dish + ", " : "From scratch, "}${need} ${need === 1 ? "item" : "items"} to buy` : `Uses ${m.uses.length} of your ${ideas.items.length} ${ideas.items.length === 1 ? "food" : "foods"}${need ? `, needs ${need} more` : ", nothing else needed"}`;
   let body = "";
   if (m.open) {
     if (m.loading) body = `<p class="note">Writing the recipe…</p>`;
