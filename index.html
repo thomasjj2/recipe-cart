@@ -189,6 +189,7 @@ details.saved .meta{margin-top:2px}
     <div id="filterSummary" class="fsum" hidden></div>
     <small class="note" id="ideasMsg" role="status" style="display:block;margin-top:8px;color:var(--bad)"></small>
     <button class="btn primary block" id="goIdeas">Get ideas</button>
+    <button class="btn ghost block" id="goScratch">Nothing in the fridge? Start from scratch</button>
   </div>
   <button class="btn ghost block" id="shareOwn" style="margin:0 0 12px">Share my own meal</button>
   <div id="ideasList"></div>
@@ -1315,16 +1316,17 @@ $("stapleChips").addEventListener("click", (ev) => {
 
 async function ideasApi(action, extra = {}) {
   const idToken = await user.getIdToken();
-  return postJSON("/.netlify/functions/kitchen-ideas", { idToken, action, items: kitchen, cook: ideaFilters.cook, minProtein: ideaFilters.minProtein, maxCalories: ideaFilters.maxCal, budget: ideaFilters.budget, ...extra });
+  return postJSON("/.netlify/functions/kitchen-ideas", { idToken, action, items: ideas && ideas.scratch ? [] : kitchen, scratch: !!(ideas && ideas.scratch), cook: ideaFilters.cook, minProtein: ideaFilters.minProtein, maxCalories: ideaFilters.maxCal, budget: ideaFilters.budget, ...extra });
 }
 
-async function getIdeas(more) {
-  if ($("kitchenIn").value.trim()) { addKitchen($("kitchenIn").value); $("kitchenIn").value = ""; }
+async function getIdeas(more, scratch) {
+  const sc = !!scratch || !!(more && ideas && ideas.scratch);
+  if (!sc && $("kitchenIn").value.trim()) { addKitchen($("kitchenIn").value); $("kitchenIn").value = ""; }
   if (!user) return ideasMsg("Sign in with the button at the top to get ideas.");
-  if (!kitchen.length) return ideasMsg("Add at least one food first.");
+  if (!sc && !kitchen.length) return ideasMsg("Add at least one food first, or tap Start from scratch.");
   if (ideas?.busy) return;
   ideasMsg(""); $("banner").innerHTML = "";
-  const gen = more && ideas ? ideas : (ideas = { items: kitchen.slice(), list: [], busy: true });
+  const gen = more && ideas ? ideas : (ideas = { items: sc ? [] : kitchen.slice(), scratch: sc, list: [], busy: true });
   gen.busy = true; renderIdeas();
   try {
     const r = await ideasApi("ideas", { avoid: gen.list.map((m) => m.title) });
@@ -1334,17 +1336,18 @@ async function getIdeas(more) {
   renderIdeas();
 }
 $("goIdeas").onclick = () => getIdeas(false);
+$("goScratch").onclick = () => getIdeas(false, true);
 
 function ideaCardHtml(i, m) {
   const need = m.needs.length;
-  const tag = `Uses ${m.uses.length} of your ${ideas.items.length} ${ideas.items.length === 1 ? "food" : "foods"}${need ? `, needs ${need} more` : ", nothing else needed"}`;
+  const tag = ideas.scratch ? `From scratch, ${need} ${need === 1 ? "item" : "items"} to buy` : `Uses ${m.uses.length} of your ${ideas.items.length} ${ideas.items.length === 1 ? "food" : "foods"}${need ? `, needs ${need} more` : ", nothing else needed"}`;
   let body = "";
   if (m.open) {
     if (m.loading) body = `<p class="note">Writing the recipe…</p>`;
     else if (m.detail) {
       const have = m.detail.ingredients.filter((x) => x.kind === "have"), basics = m.detail.ingredients.filter((x) => x.kind === "basic"), miss = m.detail.ingredients.filter((x) => x.kind === "need");
       const li = (x) => `<li>${esc(x.qty ? x.qty + " " : "")}${esc(x.name)}</li>`;
-      body = `<h4>You have</h4><ul class="ings">${have.map(li).join("") || "<li>None of your foods</li>"}</ul>
+      body = `${ideas.scratch ? "" : `<h4>You have</h4><ul class="ings">${have.map(li).join("") || "<li>None of your foods</li>"}</ul>`}
         ${basics.length ? `<small class="note" style="display:block">Pantry basics: ${basics.map((x) => esc(x.name)).join(", ")}</small>` : ""}
         <h4>You need</h4>${miss.length ? `<ul class="ings">${miss.map(li).join("")}</ul>` : `<p class="note" style="margin:4px 0">Nothing else to buy.</p>`}
         <h4>Recipe</h4><ol class="ings">${m.detail.steps.map((t) => `<li>${esc(t)}</li>`).join("")}</ol>
