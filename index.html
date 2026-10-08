@@ -97,6 +97,7 @@ footer a{color:var(--mute)}
 .fbox[open] summary::after{content:"Hide"}
 .fsum{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:8px;font-size:.85rem;color:var(--mute)}
 .fsum button{background:none;border:0;color:var(--accent);font:inherit;font-weight:600;cursor:pointer;min-height:36px;padding:0 4px}
+.modeseg{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:0 0 12px}.modeseg .cattab{border-radius:14px;text-align:center}
 .sv h4{margin:14px 0 4px;font-size:.95rem}
 .sv ul,.sv ol{margin:0;padding-left:20px}
 .sv li{margin:3px 0}
@@ -151,7 +152,7 @@ details.saved .meta{margin-top:2px}
   <span class="heroicon" aria-hidden="true"><svg class="leaf" viewBox="0 0 24 24" width="30" height="30"><path d="M20 3C10 3 4 8 4 15c0 2 .6 3.6 1.5 4.7C7 14 11 10.5 16 9c-4 2.5-7 6-8.5 11C16 20.5 20 14 20 3z" fill="#3E7D4F"/></svg></span>
   <div>
     <h1>Recipe Cart</h1>
-    <p class="sub">Tell us what is in your kitchen and get meal ideas that are quick and different every time. Buy what is missing from your Kroger cart.</p>
+    <p class="sub">Never eat the same thing twice. Tell us what is in your kitchen, get a new meal idea, and only buy what is missing.</p>
   </div>
 </header>
 
@@ -166,6 +167,11 @@ details.saved .meta{margin-top:2px}
 <section id="paneIdeas" role="tabpanel" aria-labelledby="tabIdeas">
   <div id="sharedView" hidden></div>
   <div class="card">
+    <div class="modeseg" role="group" aria-label="What do you have">
+      <button class="cattab" id="modeHave" aria-pressed="true">I have food</button>
+      <button class="cattab" id="modeEmpty" aria-pressed="false">Fridge is empty</button>
+    </div>
+    <div id="haveBox">
     <b>What's in your kitchen?</b>
     <small class="note" style="display:block;margin:2px 0 8px">Type what you have. Separate foods with commas.</small>
     <div style="display:flex;gap:8px">
@@ -175,6 +181,17 @@ details.saved .meta{margin-top:2px}
     <div id="kitchenPills" class="pills"></div>
     <label>Tap to add common foods</label>
     <div id="stapleChips" class="pills" style="margin-top:0"></div>
+    </div>
+    <p class="note" id="emptyNote" hidden style="margin:0 0 4px">No food needed. We plan cheap meals from scratch and show what you would buy.</p>
+    <div id="storeLine" class="fsum"></div>
+    <div id="storeBox" hidden>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <input id="ideaZip" type="text" inputmode="numeric" autocomplete="postal-code" placeholder="ZIP code" style="flex:1">
+        <button class="btn ghost" id="ideaFind" style="flex-shrink:0">Find stores</button>
+      </div>
+      <div id="ideaStores"></div>
+      <button class="btn ghost block" id="storeDone" style="margin-top:8px">Done</button>
+    </div>
     <details class="fbox" id="filtersBox">
       <summary>Filters</summary>
       <label>Cooking time</label>
@@ -187,9 +204,9 @@ details.saved .meta{margin-top:2px}
       <div id="ideaBudget" style="display:flex;gap:6px"></div>
     </details>
     <div id="filterSummary" class="fsum" hidden></div>
+    <div id="histRow" class="fsum" hidden></div>
     <small class="note" id="ideasMsg" role="status" style="display:block;margin-top:8px;color:var(--bad)"></small>
     <button class="btn primary block" id="goIdeas">Get ideas</button>
-    <button class="btn ghost block" id="goScratch">Nothing in the fridge? Start from scratch</button>
   </div>
   <button class="btn ghost block" id="shareOwn" style="margin:0 0 12px">Share my own meal</button>
   <div id="ideasList"></div>
@@ -1283,6 +1300,13 @@ function renderKitchen() {
   if (ideaFilters.budget) on.push("Budget");
   $("filterSummary").hidden = !on.length;
   $("filterSummary").innerHTML = on.length ? `<span>Filters: ${on.join(", ")}</span><button id="clearFilters">Clear</button>` : "";
+  $("modeHave").setAttribute("aria-pressed", String(!emptyMode)); $("modeEmpty").setAttribute("aria-pressed", String(emptyMode));
+  $("haveBox").hidden = emptyMode; $("emptyNote").hidden = !emptyMode;
+  $("goIdeas").textContent = emptyMode ? "Plan me a cheap meal" : "Get ideas";
+  renderStoreLine();
+  $("histRow").hidden = !ideaHistory.length;
+  $("histRow").innerHTML = ideaHistory.length ? `<span>${ideaHistory.length} meals remembered on this device, so you do not see repeats</span><button id="clearHist">Clear</button>` : "";
+  if (ideaHistory.length) $("clearHist").onclick = () => { ideaHistory = []; saveHistory(); renderKitchen(); };
   if (on.length) $("clearFilters").onclick = () => {
     ideaFilters.minProtein = 0; ideaFilters.maxCal = 0; ideaFilters.budget = false;
     store.set("ideaMinProtein", "0"); store.set("ideaProtein", "0"); store.set("ideaMaxCal", "0"); store.set("ideaBudget", "0");
@@ -1314,6 +1338,80 @@ $("stapleChips").addEventListener("click", (ev) => {
   ideasMsg(""); renderKitchen();
 });
 
+let emptyMode = store.get("ideaMode") === "empty";
+// ---- Variety memory: meal titles shown before stay on this device and are sent as the avoid list ----
+const HIST_MAX = 80;
+let ideaHistory = [];
+try { const h = JSON.parse(store.get("ideaHistory") || "[]"); if (Array.isArray(h)) ideaHistory = h.map((t) => String(t).slice(0, 80)).filter(Boolean).slice(-HIST_MAX); } catch { ideaHistory = []; }
+const saveHistory = () => store.set("ideaHistory", JSON.stringify(ideaHistory));
+function rememberTitles(titles) {
+  const low = new Set(ideaHistory.map((t) => t.toLowerCase()));
+  for (const t of titles) if (t && !low.has(t.toLowerCase())) { ideaHistory.push(t); low.add(t.toLowerCase()); }
+  ideaHistory = ideaHistory.slice(-HIST_MAX); saveHistory();
+}
+function forgetTitle(t) { ideaHistory = ideaHistory.filter((x) => x.toLowerCase() !== String(t).toLowerCase()); saveHistory(); }
+function avoidList(gen) {
+  const out = [], low = new Set();
+  for (const t of [...gen.list.map((m) => m.title), ...ideaHistory.slice().reverse()]) if (!low.has(t.toLowerCase())) { low.add(t.toLowerCase()); out.push(t); }
+  return out.slice(0, HIST_MAX);
+}
+
+// ---- Kroger store for price estimates (set once, saved on this device) ----
+const EST_CARDS = 4;
+let storeOpts = [];
+function renderStoreLine() {
+  $("storeLine").innerHTML = selectedStore
+    ? `<span>Shopping at ${esc(selectedStore.name)}${selectedStore.address ? ", " + esc(selectedStore.address) : ""}</span><button id="storeChange">Change</button>`
+    : `<span>Set your Kroger store to see prices</span><button id="storeChange">Set store</button>`;
+  $("storeChange").onclick = () => { $("storeBox").hidden = !$("storeBox").hidden; if (!$("storeBox").hidden && !$("ideaZip").value) $("ideaZip").value = store.get("zip") || ""; };
+}
+function renderIdeaStores() {
+  $("ideaStores").innerHTML = storeOpts.map((s, i) => `<div class="storeopt ${selectedStore?.locationId === s.locationId ? "selected" : ""}" data-sidx="${i}"><b>${esc(s.name)}</b><br><small class="note">${esc(s.address)}</small></div>`).join("");
+}
+function pickStore(s) { selectedStore = s; store.set("selectedStore", JSON.stringify(s)); renderStoreLine(); renderIdeaStores(); refreshEstimates(); }
+$("ideaFind").onclick = async () => {
+  const zip = $("ideaZip").value.trim();
+  if (!/^\d{5}$/.test(zip)) return ideasMsg("Enter a 5 digit ZIP code.");
+  ideasMsg(""); store.set("zip", zip); $("ideaFind").disabled = true;
+  $("ideaStores").innerHTML = `<p class="note">Looking for stores…</p>`;
+  try {
+    storeOpts = (await postJSON("/.netlify/functions/kroger-stores", { zip })).stores || [];
+    if (!storeOpts.length) $("ideaStores").innerHTML = `<p class="note">No stores found near that ZIP.</p>`;
+    else pickStore(storeOpts[0]); // the closest store is preselected, tap another to change it
+  } catch (e) { $("ideaStores").innerHTML = ""; ideasMsg(e.message || "Could not find stores."); }
+  $("ideaFind").disabled = false;
+};
+$("ideaStores").addEventListener("click", (ev) => { const el = ev.target.closest("[data-sidx]"); if (el) pickStore(storeOpts[Number(el.dataset.sidx)]); });
+$("storeDone").onclick = () => { $("storeBox").hidden = true; };
+
+// Price estimates for the first cards, in one request. Kept in memory only, never saved.
+async function estimateNew() {
+  if (!ideas || !selectedStore || !user) return;
+  const g = ideas, loc = selectedStore.locationId;
+  const pick = g.list.filter((m) => !m.est).slice(0, g.scratch ? 3 : EST_CARDS);
+  const need = pick.filter((m) => m.needs.length);
+  pick.filter((m) => !m.needs.length).forEach((m) => { m.est = { total: 0, found: 0, count: 0 }; });
+  if (!need.length) return renderIdeas();
+  need.forEach((m) => { m.est = { loading: true }; });
+  renderIdeas();
+  try {
+    const idToken = await user.getIdToken();
+    const r = await postJSON("/.netlify/functions/price-estimates", { idToken, locationId: loc, groups: need.map((m) => m.needs) });
+    if (ideas === g && selectedStore?.locationId === loc) need.forEach((m, k) => { m.est = r.groups?.[k] || { failed: true }; });
+  } catch { if (ideas === g && selectedStore?.locationId === loc) need.forEach((m) => { m.est = { failed: true }; }); }
+  if (ideas === g) renderIdeas();
+}
+function refreshEstimates() { if (ideas) { ideas.list.forEach((m) => { delete m.est; }); estimateNew(); } }
+function priceChipText(m) {
+  const e = m.est;
+  if (!e || e.failed) return "";
+  if (e.loading) return "🛒 checking price…";
+  if (!e.count) return "🛒 nothing to buy";
+  return e.found ? `🛒 about ${money(e.total)} to buy${e.found < e.count ? ` (${e.found} of ${e.count} items)` : ""}` : "";
+}
+$("modeHave").onclick = () => { emptyMode = false; store.set("ideaMode", "have"); ideasMsg(""); renderKitchen(); };
+$("modeEmpty").onclick = () => { emptyMode = true; store.set("ideaMode", "empty"); ideasMsg(""); renderKitchen(); };
+
 async function ideasApi(action, extra = {}) {
   const idToken = await user.getIdToken();
   return postJSON("/.netlify/functions/kitchen-ideas", { idToken, action, items: ideas && ideas.scratch ? [] : kitchen, scratch: !!(ideas && ideas.scratch), cook: ideaFilters.cook, minProtein: ideaFilters.minProtein, maxCalories: ideaFilters.maxCal, budget: ideaFilters.budget, ...extra });
@@ -1323,20 +1421,20 @@ async function getIdeas(more, scratch) {
   const sc = !!scratch || !!(more && ideas && ideas.scratch);
   if (!sc && $("kitchenIn").value.trim()) { addKitchen($("kitchenIn").value); $("kitchenIn").value = ""; }
   if (!user) return ideasMsg("Sign in with the button at the top to get ideas.");
-  if (!sc && !kitchen.length) return ideasMsg("Add at least one food first, or tap Start from scratch.");
+  if (!sc && !kitchen.length) return ideasMsg("Add at least one food first, or switch to Fridge is empty.");
   if (ideas?.busy) return;
   ideasMsg(""); $("banner").innerHTML = "";
   const gen = more && ideas ? ideas : (ideas = { items: sc ? [] : kitchen.slice(), scratch: sc, list: [], busy: true });
   gen.busy = true; renderIdeas();
   try {
-    const r = await ideasApi("ideas", { avoid: gen.list.map((m) => m.title) });
-    gen.list.push(...r.ideas);
+    const r = await ideasApi("ideas", { avoid: avoidList(gen) });
+    gen.list.push(...r.ideas); rememberTitles(r.ideas.map((m) => m.title));
   } catch (e) { banner("err", e.message || "Could not get ideas. Try again."); if (!gen.list.length) ideas = null; }
   gen.busy = false;
   renderIdeas();
+  estimateNew();
 }
-$("goIdeas").onclick = () => getIdeas(false);
-$("goScratch").onclick = () => getIdeas(false, true);
+$("goIdeas").onclick = () => getIdeas(false, emptyMode);
 
 function ideaCardHtml(i, m) {
   const need = m.needs.length;
@@ -1364,14 +1462,14 @@ function ideaCardHtml(i, m) {
             <small class="note">Prices are live estimates from Kroger and can differ at checkout.</small>
             <button class="btn primary block" data-iact="send" data-i="${i}" ${m.cart.sending ? "disabled" : ""}>${m.cart.sent ? "Sent to your cart" : m.cart.sending ? "Sending…" : "Send to my Kroger cart"}</button></div>`;
         } else {
-          body += `<label for="zip${i}">ZIP code for Kroger prices</label>
-            <input id="zip${i}" type="text" inputmode="numeric" autocomplete="postal-code" placeholder="31088" value="${esc(store.get("zip") || "")}">
+          body += `${selectedStore ? `<small class="note" style="display:block;margin-top:10px">Prices at ${esc(selectedStore.name)}</small>` : `<label for="zip${i}">ZIP code for Kroger prices</label>
+            <input id="zip${i}" type="text" inputmode="numeric" autocomplete="postal-code" placeholder="31088" value="${esc(store.get("zip") || "")}">`}
             <button class="btn primary block" data-iact="prices" data-i="${i}" ${m.cart?.loading ? "disabled" : ""}>${m.cart?.loading ? "Looking up prices…" : "Get Kroger prices for missing items"}</button>`;
         }
       }
     }
   }
-  const metaChips = [`⏱ ${m.minutes} min`, m.protein ? `💪 ≈${m.protein}g protein` : "", m.calories ? `🔥 ≈${m.calories} cal` : ""].filter(Boolean);
+  const metaChips = [`⏱ ${m.minutes} min`, m.protein ? `💪 ≈${m.protein}g protein` : "", m.calories ? `🔥 ≈${m.calories} cal` : "", priceChipText(m)].filter(Boolean);
   return `<div class="card idea">
     <div class="ihead">
       <span class="ibadge" aria-hidden="true">${esc(m.emoji || "🍽️")}</span>
@@ -1393,7 +1491,7 @@ function renderIdeas() {
   renderKitchen();
   $("goIdeas").disabled = !!ideas?.busy;
   const box = $("ideasList");
-  if (!ideas) { box.innerHTML = ""; return; }
+  if (!ideas) { box.innerHTML = `<p class="note" style="text-align:center;margin:8px 0">Every search brings meals you have not seen. We remember what we showed you on this device and skip repeats.</p>`; return; }
   box.innerHTML = ideas.list.map((m, i) => ideaCardHtml(i, m)).join("") +
     (ideas.busy ? `<div class="card"><p class="note" style="margin:0">Thinking up ideas…</p></div>`
       : ideas.list.length ? `<button class="btn ghost block" data-iact="more">More ideas</button>` : "");
@@ -1424,7 +1522,7 @@ async function saveIdea(i) {
     if (!m.detail) applyDetail(m, (await ideasApi("detail", detailBody(m))).detail);
     // Saves only the title, ingredient names and amounts, and the recipe steps. No Kroger products or prices.
     await api("save", { title: m.title, ingredients: m.detail.ingredients.map((x) => ({ name: x.name, qty: x.qty })), steps: m.detail.steps, servings: m.detail.servings, proteinPerServing: m.detail.proteinPerServing });
-    m.saved = true;
+    m.saved = true; forgetTitle(m.title);
     banner("ok", "Saved with its recipe. Find it on the Saved tab.");
   } catch (e) { banner("err", e.message || "Could not save this meal."); }
   m.saving = false;
@@ -1434,12 +1532,12 @@ async function saveIdea(i) {
 async function ideaPrices(i) {
   const m = ideas.list[i];
   const zip = ($(`zip${i}`)?.value || "").trim();
-  if (!zip) return banner("err", "Enter your ZIP code first.");
-  store.set("zip", zip);
+  if (!zip && !selectedStore) return banner("err", "Enter your ZIP code first.");
+  if (zip) store.set("zip", zip);
   m.cart = { loading: true }; renderIdeas();
   try {
     const miss = m.detail.ingredients.filter((x) => x.kind === "need").map((x) => ({ name: x.name, qty: x.qty }));
-    const r = await postJSON("/.netlify/functions/match-products", { ingredients: miss, zip });
+    const r = await postJSON("/.netlify/functions/match-products", { ingredients: miss, ...(selectedStore ? { locationId: selectedStore.locationId } : { zip }) });
     m.cart = { items: r.items };
   } catch (e) { m.cart = null; banner("err", e.message || "Could not look up prices."); }
   renderIdeas();
