@@ -27,9 +27,10 @@ label{display:block;font-weight:600;font-size:.9rem;margin:10px 0 4px}
 .btn.danger{background:#fff;color:var(--bad);border:1.5px solid #e9b8ab}
 .btn:disabled{opacity:.5}
 .btn.block{display:block;width:100%;margin-top:10px}
-#signin{position:fixed;top:0;left:0;right:0;background:var(--sand);color:var(--ink);border-bottom:1px solid var(--line);padding:calc(8px + env(safe-area-inset-top)) 14px 8px;font-size:.85rem;display:flex;justify-content:space-between;align-items:center;gap:10px;z-index:5}
-#signin span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#signin button{background:#fff;border:1.5px solid var(--line);color:var(--ink);border-radius:6px;padding:8px 12px;min-height:36px;font:inherit;cursor:pointer;flex-shrink:0}
+#signin{position:absolute;top:0;right:0;padding:calc(8px + env(safe-area-inset-top)) 14px 0;z-index:5}
+#acct{width:44px;height:44px;border-radius:50%;border:1.5px solid var(--line);background:#fff;color:var(--ink);display:flex;align-items:center;justify-content:center;padding:0;font:800 1.1rem "Fraunces",Georgia,serif;cursor:pointer}
+#acct.on{background:var(--accent);border-color:var(--accent);color:#fff}
+#acct:focus-visible{outline:3px solid #f2c230;outline-offset:2px}
 .tabs{display:flex;gap:6px;background:var(--sand);padding:4px;border-radius:10px;margin-bottom:14px}
 .tabs button{flex:1;min-height:44px;border:0;border-radius:7px;background:transparent;font:inherit;font-weight:600;color:var(--mute);cursor:pointer}
 .tabs button[aria-selected=true]{background:var(--accent);color:#fff}
@@ -81,6 +82,7 @@ details.saved .meta{display:block;color:var(--mute);font-size:.85rem;font-weight
 .ings li{padding:2px 0}
 .actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}
 .actions .primary{grid-column:1 / -1}
+.actions .danger:last-child:nth-child(odd){grid-column:1 / -1}
 .empty p{margin:0 0 12px;color:var(--mute)}
 footer{max-width:560px;margin:0 auto;padding:0 18px calc(40px + env(safe-area-inset-bottom));color:var(--mute);font-size:.85rem}
 footer a{color:var(--mute)}
@@ -165,7 +167,7 @@ details.saved .meta{margin-top:2px}
 .pcredit a{color:var(--mute)}
 @media (prefers-reduced-motion:reduce){.fph{transition:none}}
 </style></head><body>
-<div id="signin"><span id="who">Not signed in</span><button id="signbtn">Sign in</button></div>
+<div id="signin"><button id="acct" aria-label="My account, signed out" aria-haspopup="dialog"><span id="acctIcon"></span></button></div>
 <main>
 <header class="hero">
   <span class="heroicon" aria-hidden="true"><svg class="leaf" viewBox="0 0 24 24" width="30" height="30"><path d="M20 3C10 3 4 8 4 15c0 2 .6 3.6 1.5 4.7C7 14 11 10.5 16 9c-4 2.5-7 6-8.5 11C16 20.5 20 14 20 3z" fill="#3E7D4F"/></svg></span>
@@ -252,8 +254,12 @@ details.saved .meta{margin-top:2px}
     <button class="btn primary block" id="go">Build shopping list</button>
   </div></div>
   <div id="list"></div>
-  <h2 style="font-size:1.1rem;margin:24px 0 8px">Saved meals</h2>
+  <div class="modeseg" role="group" aria-label="Saved meals or my meals" style="margin-top:24px">
+    <button class="cattab" id="viewSaved" aria-pressed="true">Saved</button>
+    <button class="cattab" id="viewMine" aria-pressed="false">My Meals</button>
+  </div>
   <div id="lists"></div>
+  <div id="myMeals" hidden></div>
 </section>
 
 <section id="paneProtein" role="tabpanel" aria-labelledby="tabProtein" hidden>
@@ -301,11 +307,6 @@ details.saved .meta{margin-top:2px}
   <div id="proteinResults"></div>
 </section>
 
-<div class="card" id="danger" hidden style="margin-top:18px">
-  <b>Your data</b>
-  <p class="note" style="margin:6px 0 0"><small class="note">Delete your account to remove your saved lists, your weekly plan history, your Kroger connection, and your sign in. This cannot be undone.</small></p>
-  <button class="btn danger block" id="deleteAccount">Delete my account and data</button>
-</div>
 </main>
 
 <footer>
@@ -313,6 +314,22 @@ details.saved .meta{margin-top:2px}
   <p>Meal photos from <a href="https://unsplash.com/?utm_source=recipe_cart&utm_medium=referral" target="_blank" rel="noopener">Unsplash</a>. They show the style of a dish and may not match your exact meal.</p>
   <p>Recipe Cart is not affiliated with or endorsed by Kroger.</p>
 </footer>
+
+<div class="modal" id="acctModal" role="dialog" aria-modal="true" aria-labelledby="acctTitle" hidden>
+  <div class="sheet">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <b id="acctTitle" style="font-family:'Fraunces',Georgia,serif;font-size:1.2rem">My account</b>
+      <button class="iconbtn" id="acctClose" aria-label="Close">×</button>
+    </div>
+    <p class="note" id="who" style="margin:0">Not signed in</p>
+    <button class="btn primary block" id="signbtn">Sign in with Google</button>
+    <div class="card" id="danger" hidden style="margin-top:18px">
+      <b>Your data</b>
+      <p class="note" style="margin:6px 0 0"><small class="note">Delete your account to remove your saved lists, your own meals, your weekly plan history, your Kroger connection, and your sign in. This cannot be undone.</small></p>
+      <button class="btn danger block" id="deleteAccount">Delete my account and data</button>
+    </div>
+  </div>
+</div>
 
 <div class="modal" id="shareModal" role="dialog" aria-modal="true" aria-labelledby="shareTitle" hidden>
   <div class="sheet">
@@ -325,6 +342,8 @@ details.saved .meta{margin-top:2px}
       <input id="ownName" type="text" maxlength="60" placeholder="Sunday chicken and rice prep" autocomplete="off">
       <label for="ownIngs">Main ingredients, separated by commas</label>
       <input id="ownIngs" type="text" maxlength="200" placeholder="chicken, rice, broccoli" autocomplete="off">
+    </div>
+    <div id="notesField" hidden>
       <label for="ownNotes">Recipe notes (optional)</label>
       <textarea id="ownNotes" maxlength="500" placeholder="2 lbs chicken thighs, marinate 30 min, bake at 400 for 25" style="min-height:84px"></textarea>
     </div>
@@ -338,6 +357,7 @@ details.saved .meta{margin-top:2px}
       <button class="btn primary" id="doShare">Share</button>
       <button class="btn ghost" id="pickPhoto">Add my photo</button>
       <button class="btn ghost" id="rmPhoto" hidden>Remove photo</button>
+      <button class="btn ghost" id="saveMine" hidden>Save to My Meals</button>
     </div>
     <small class="note" id="shareMsg" role="status" style="display:block;margin-top:8px;color:var(--bad)"></small>
     <small class="note" style="display:block;margin-top:6px">Your photo stays on your device. It is never uploaded.</small>
@@ -619,12 +639,29 @@ async function ensureUser() {
 onAuthStateChanged(auth, (u) => {
   user = u;
   $("who").textContent = u ? `Signed in as ${u.email || u.displayName || "you"}` : "Not signed in";
-  $("signbtn").textContent = u ? "Sign out" : "Sign in";
+  $("signbtn").textContent = u ? "Sign out" : "Sign in with Google";
+  $("signbtn").className = "btn block " + (u ? "ghost" : "primary");
   $("danger").hidden = !u;
+  $("acct").classList.toggle("on", !!u);
+  $("acct").setAttribute("aria-label", u ? "My account, signed in" : "My account, signed out");
+  $("acctIcon").innerHTML = u ? esc(String(u.displayName || u.email || "?").trim().charAt(0).toUpperCase()) : PERSON_ICON;
+  closeAcct();
   if (tab === "build") loadLists();
   if (tab === "protein") loadPlanHome();
 });
 $("signbtn").onclick = () => (user ? signOut(auth) : signIn());
+
+// ---- My account sheet ----
+const PERSON_ICON = `<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><circle cx="12" cy="8.5" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M4.5 20c.8-4 3.7-6 7.5-6s6.700 2 7.500 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
+function openAcct() { $("acctModal").hidden = false; document.body.style.overflow = "hidden"; $("acctClose").focus(); }
+function closeAcct() {
+  if ($("acctModal").hidden) return;
+  $("acctModal").hidden = true; document.body.style.overflow = ""; $("acct").focus();
+}
+$("acct").onclick = openAcct;
+$("acctClose").onclick = closeAcct;
+$("acctModal").addEventListener("click", (ev) => { if (ev.target === $("acctModal")) closeAcct(); });
+document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && !$("acctModal").hidden) closeAcct(); });
 
 // Handle redirect back from Kroger consent
 const qs = new URLSearchParams(location.search);
@@ -644,7 +681,7 @@ function setTab(name) {
   $("paneProtein").hidden = name !== "protein";
   $("tabBuild").setAttribute("aria-selected", String(name === "build"));
   $("tabProtein").setAttribute("aria-selected", String(name === "protein"));
-  if (name === "build") { loadLists(); renderMeals(); }
+  if (name === "build") { loadLists(); renderMeals(); renderMine(); }
   if (name === "protein") loadPlanHome();
 }
 $("tabIdeas").onclick = () => setTab("ideas");
@@ -990,18 +1027,119 @@ async function saveList() {
   }
 }
 
+// ---- My Meals ----
+// Meals people add themselves. They are saved to the account like saved meals, but flagged own. Photos are never stored.
+let savedView = "saved", myList = [], listsLoaded = false;
+function loadMine() { return myList; }
+function mineView(l) { return { ...l, steps: String(l.notes || "").split(/\n+/).map((t) => t.trim()).filter(Boolean) }; }
+function setSavedView(v) {
+  savedView = v;
+  $("viewSaved").setAttribute("aria-pressed", String(v === "saved"));
+  $("viewMine").setAttribute("aria-pressed", String(v === "mine"));
+  $("lists").hidden = v !== "saved";
+  $("myMeals").hidden = v !== "mine";
+  if (v === "mine") renderMine();
+}
+$("viewSaved").onclick = () => setSavedView("saved");
+$("viewMine").onclick = () => setSavedView("mine");
+
+function renderMine() {
+  const box = $("myMeals"), list = loadMine();
+  if (!user) {
+    box.innerHTML = `<div class="card empty"><p>Sign in to add and see your own meals.</p><button class="btn primary" id="minSignIn">Sign in with Google</button></div>`;
+    $("minSignIn").onclick = signIn;
+    return;
+  }
+  if (!listsLoaded) { box.innerHTML = "<p>Loading your meals…</p>"; return; }
+  const add = `<button class="btn primary block" data-mact="add">Add my meal</button>`;
+  const note = "";
+  if (!list.length) {
+    box.innerHTML = `<div class="card empty"><p>Nothing here yet. Add a meal you already make, then get prices, copy it, or share it.</p>${add}</div>${note}`;
+    return;
+  }
+  box.innerHTML = add + note + list.map((l) => {
+    const date = new Date(l.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+    const n = l.ingredients.length;
+    return `<details class="card saved">
+      <summary><span class="ibadge" aria-hidden="true">${esc(l.emoji || "🍽️")}</span><span class="t">${esc(l.title)}<span class="meta">${n} ${n === 1 ? "item" : "items"}, added ${esc(date)}</span></span></summary>
+      <ul class="ings">${l.ingredients.map((i) => `<li>${esc(i.qty ? i.qty + " " : "")}${esc(i.name)}</li>`).join("")}</ul>
+      ${l.notes ? `<b style="font-size:.95rem">Recipe notes</b><p style="margin:4px 0 0;white-space:pre-wrap">${esc(l.notes)}</p>` : ""}
+      <div class="actions">
+        <button class="btn primary" data-mact="price" data-id="${esc(l.id)}">Get prices</button>
+        <button class="btn ghost" data-mact="share" data-id="${esc(l.id)}">Share</button>
+        <button class="btn ghost" data-mact="copy" data-id="${esc(l.id)}">Copy</button>
+        <button class="btn ghost" data-mact="download" data-id="${esc(l.id)}">Download</button>
+        <button class="btn danger" data-mact="delete" data-id="${esc(l.id)}">Delete</button>
+      </div>
+    </details>`;
+  }).join("");
+}
+
+$("myMeals").addEventListener("click", async (ev) => {
+  const btn = ev.target.closest("button[data-mact]");
+  if (!btn) return;
+  const act = btn.dataset.mact;
+  if (act === "add") return openAddMine();
+  const l = loadMine().find((x) => x.id === btn.dataset.id);
+  if (!l) return;
+  if (act === "price") return priceList(mineView(l));
+  if (act === "share") return openShareMine(l);
+  if (act === "copy") return copyList(mineView(l));
+  if (act === "download") return downloadList(mineView(l));
+  if (act === "delete") {
+    if (!confirm(`Delete "${l.title}"?`)) return;
+    try { await api("delete", { id: l.id }); banner("ok", "Meal deleted."); loadLists(); }
+    catch (e) { banner("err", e.message || "Could not delete that meal."); }
+  }
+});
+
+function openAddMine() {
+  share = { own: true, addMode: true, title: "", emoji: EMOJI_CHOICES[0], ingredients: [], full: [], stats: [], steps: [], notes: "", photo: null, photoUrl: null };
+  showShare();
+}
+function openShareMine(l) {
+  share = {
+    own: false, mine: true, title: cutText(String(l.title), 80), emoji: l.emoji || "🍽️",
+    ingredients: l.ingredients.map((x) => x.name).slice(0, 5),
+    full: l.ingredients.map((x) => cutText(String(x.name), 80)).slice(0, 14),
+    steps: [], notes: l.notes || "", stats: [], photo: null, photoUrl: null,
+  };
+  showShare();
+}
+$("saveMine").onclick = async () => {
+  if (!share?.own) return;
+  const title = share.title.trim();
+  if (!title) return shareMsg("Add a meal name first.");
+  if (!share.full.length) return shareMsg("Add at least one ingredient first.");
+  const body = { own: true, title: cutText(title, 80), emoji: share.emoji, notes: share.notes || "", ingredients: share.full.map((n) => ({ name: n, qty: "" })) };
+  if (!(await ensureUser())) return;
+  $("saveMine").disabled = true;
+  try {
+    await api("save", body);
+    closeShare();
+    banner("ok", "Saved to My Meals. Find it on the Saved tab.");
+    if (tab === "build") loadLists();
+  } catch (e) { shareMsg(e.message || "Could not save this meal."); }
+  $("saveMine").disabled = false;
+};
+
 // ---- Saved meals ----
 async function loadLists() {
   const box = $("lists");
+  if (!user) { myList = []; listsLoaded = false; renderMine(); }
   if (!user) {
     box.innerHTML = `<div class="card empty"><p>Sign in to see your saved meals.</p><button class="btn primary" id="listsSignIn">Sign in with Google</button></div>`;
     $("listsSignIn").onclick = signIn;
     return;
   }
   box.innerHTML = "<p>Loading your saved meals…</p>";
+  listsLoaded = false; renderMine();
   try {
     const r = await api("list");
-    savedLists = r.lists || [];
+    const all = r.lists || [];
+    savedLists = all.filter((x) => !x.own);
+    myList = all.filter((x) => x.own);
+    listsLoaded = true; renderMine();
     if (!savedLists.length) {
       box.innerHTML = `<div class="card empty"><p>No saved meals yet. Get ideas from what is in your kitchen, then tap Save on the ones you like.</p></div>`;
       return;
@@ -1018,6 +1156,7 @@ async function loadLists() {
           <button class="btn primary" data-act="price" data-id="${esc(l.id)}">Get prices</button>
           ${l.servings ? "" : `<button class="btn ghost" data-act="nutrition" data-id="${esc(l.id)}">Add nutrition info</button>`}
           <button class="btn ghost" data-act="share" data-id="${esc(l.id)}">Share</button>
+          <button class="btn ghost" data-act="shareMine" data-id="${esc(l.id)}">Share my version</button>
           <button class="btn ghost" data-act="copy" data-id="${esc(l.id)}">Copy</button>
           <button class="btn ghost" data-act="download" data-id="${esc(l.id)}">Download</button>
           <button class="btn danger" data-act="delete" data-id="${esc(l.id)}">Delete</button>
@@ -1026,6 +1165,7 @@ async function loadLists() {
     }).join("");
   } catch (e) {
     box.innerHTML = "";
+    listsLoaded = true; renderMine();
     banner("err", e.message || "Could not load your saved meals.");
   }
 }
@@ -1039,6 +1179,7 @@ $("lists").addEventListener("click", async (ev) => {
   if (act === "price") return priceList(l);
   if (act === "nutrition") return addNutrition(l, btn);
   if (act === "share") return openShareSaved(l);
+  if (act === "shareMine") return openShareSaved(l, true);
   if (act === "copy") return copyList(l);
   if (act === "download") return downloadList(l);
   if (act === "delete") {
@@ -1115,6 +1256,7 @@ $("deleteAccount").onclick = async () => {
     await api("deleteAccount");
     await signOut(auth).catch(() => {});
     savedLists = [];
+    myList = []; listsLoaded = false; renderMine();
     $("danger").hidden = true;
     $("lists").innerHTML = "";
     banner("ok", "Your account and data were deleted.");
@@ -1630,7 +1772,9 @@ function ideaCardHtml(i, m) {
       <button class="btn ${m.open ? "ghost" : "primary"}" data-iact="recipe" data-i="${i}">${m.open ? "Hide recipe" : "Make it"}</button>
       <button class="btn ghost" data-iact="save" data-i="${i}" ${m.saved || m.saving ? "disabled" : ""}>${m.saved ? "Saved" : m.saving ? "Saving…" : "Save"}</button>
     </div>
-    ${m.detail ? `<button class="btn ghost block" data-iact="share" data-i="${i}">Share my version</button>` : ""}
+    ${m.detail ? (m.saved
+      ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px"><button class="btn ghost" data-iact="share" data-i="${i}">Share</button><button class="btn ghost" data-iact="shareMine" data-i="${i}">Share my version</button></div>`
+      : `<button class="btn ghost block" data-iact="share" data-i="${i}">Share</button>`) : ""}
   </div>`;
 }
 
@@ -1719,6 +1863,7 @@ $("ideasList").addEventListener("click", (ev) => {
   else if (a === "prices") ideaPrices(i);
   else if (a === "send") ideaSend(i);
   else if (a === "share") openShare(i);
+  else if (a === "shareMine") openShare(i, true);
 });
 renderIdeas();
 renderFeatured();
@@ -1851,11 +1996,20 @@ function syncPhotoButtons() {
 }
 function showShare() {
   $("ownFields").hidden = !share.own;
+  $("notesField").hidden = !(share.own || share.version);
   $("iconRow").hidden = !(share.own || share.saved);
-  $("shareTitle").textContent = share.own ? "Share my own meal" : share.saved ? "Share this recipe" : "Share my version";
+  $("shareTitle").textContent = share.own ? (share.addMode ? "Add my meal" : "Share my own meal")
+    : share.mine ? "Share my meal" : share.version ? "Share my version" : "Share this recipe";
+  $("saveMine").hidden = !share.own;
+  $("saveMine").className = "btn " + (share.addMode ? "primary" : "ghost");
+  $("saveMine").style.order = share.addMode ? "-1" : "0";
+  $("saveMine").style.gridColumn = "1 / -1";
+  $("doShare").className = "btn " + (share.addMode ? "ghost" : "primary");
+  $("doShare").style.gridColumn = share.addMode ? "1 / -1" : "";
   syncPhotoButtons();
   shareMsg("");
-  if (share.own) { $("ownName").value = ""; $("ownIngs").value = ""; $("ownNotes").value = ""; }
+  if (share.own) { $("ownName").value = ""; $("ownIngs").value = ""; }
+  $("ownNotes").value = share.notes || "";
   if (share.own || share.saved) renderOwnEmoji();
   $("shareModal").hidden = false;
   document.body.style.overflow = "hidden";
@@ -1868,12 +2022,12 @@ function closeShare() {
   $("shareModal").hidden = true;
   document.body.style.overflow = "";
 }
-function openShare(i) {
+function openShare(i, version = false) {
   const m = ideas?.list[i];
   if (!m?.detail) return;
   const ing = m.detail.ingredients.filter((x) => x.kind !== "basic").map((x) => x.name);
   share = {
-    own: false, title: m.title, emoji: m.emoji || "🍽️", ingredients: ing.slice(0, 5),
+    own: false, version, title: m.title, emoji: m.emoji || "🍽️", ingredients: ing.slice(0, 5),
     stats: [`${m.minutes} min`, m.protein ? `≈${m.protein}g protein` : "", m.calories ? `≈${m.calories} cal` : ""].filter(Boolean),
     full: m.detail.ingredients.map((x) => cutText([x.qty, x.name].filter(Boolean).join(" "), 80)).slice(0, 14),
     steps: m.detail.steps.map((x) => cutText(x, 260)).slice(0, 10), notes: "",
@@ -1882,9 +2036,9 @@ function openShare(i) {
   };
   showShare();
 }
-function openShareSaved(l) {
+function openShareSaved(l, version = false) {
   share = {
-    own: false, saved: true, title: cutText(String(l.title || "My meal"), 80), emoji: "🍽️",
+    own: false, saved: true, version, title: cutText(String(l.title || "My meal"), 80), emoji: "🍽️",
     ingredients: l.ingredients.map((x) => x.name).slice(0, 5),
     full: l.ingredients.map((x) => cutText([x.qty, x.name].filter(Boolean).join(" "), 80)).slice(0, 14),
     steps: (l.steps || []).map((x) => cutText(String(x), 260)).slice(0, 10), notes: "",
@@ -1946,7 +2100,7 @@ $("doShare").onclick = async () => {
   const file = new File([blob], "recipe-cart-card.png", { type: "image/png" });
   const { link, trimmed } = await buildShareLink(share);
   if (trimmed) shareMsg("That recipe was long, so the link holds a shortened version.");
-  const lead = share.own && !share.notes ? "See what is in it" : "See the recipe";
+  const lead = (share.own || share.mine) && !share.notes ? "See what is in it" : "See the recipe";
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
     try { await navigator.share({ files: [file], text: `${share.title || "My meal"}, made with Recipe Cart. ${lead}: ${link}` }); }
     catch (e) { if (e.name !== "AbortError") shareMsg("Sharing did not work. Tap Save image instead."); }
