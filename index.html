@@ -145,6 +145,25 @@ details.saved summary{align-items:center;gap:12px}
 details.saved .t{flex:1;min-width:0}
 details.saved .meta{margin-top:2px}
 @media (prefers-reduced-motion:reduce){.btn{transition:none}}
+/* ===== Featured meals row and meal photos ===== */
+.feat{margin:0 0 16px}
+.feat h2{font-size:1.2rem;line-height:1.2;margin:0}
+.feat .fsub{display:block;margin:2px 0 8px}
+.featrow{display:flex;gap:12px;overflow-x:auto;scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch;padding:2px 18px 6px;margin:0 -18px;scrollbar-width:none}
+.featrow::-webkit-scrollbar{display:none}
+.fwrap{flex:0 0 156px;scroll-snap-align:start}
+.fcard{display:block;width:100%;border:0;padding:0;background:none;font:inherit;text-align:left;color:var(--ink);cursor:pointer}
+.fwrap .pcredit{font-size:.7rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:1em}
+.fcard:active .fph{transform:scale(.98)}
+.fph{height:108px;border-radius:16px;background:var(--sand);display:flex;align-items:center;justify-content:center;font-size:2.2rem;overflow:hidden;transition:transform .08s}
+.fph img{width:100%;height:100%;object-fit:cover;display:block}
+.fcard b{display:block;margin-top:7px;font-size:.95rem;line-height:1.2}
+.fcard small{display:block;color:var(--mute);font-size:.8rem;margin-top:1px}
+.iphoto{flex-shrink:0;width:72px;height:72px;border-radius:14px;object-fit:cover;background:var(--sand);display:block}
+.ibanner{width:100%;height:150px;object-fit:cover;border-radius:14px;background:var(--sand);display:block;margin-top:12px}
+.pcredit{display:block;margin-top:4px;font-size:.75rem;color:var(--mute)}
+.pcredit a{color:var(--mute)}
+@media (prefers-reduced-motion:reduce){.fph{transition:none}}
 </style></head><body>
 <div id="signin"><span id="who">Not signed in</span><button id="signbtn">Sign in</button></div>
 <main>
@@ -166,6 +185,11 @@ details.saved .meta{margin-top:2px}
 
 <section id="paneIdeas" role="tabpanel" aria-labelledby="tabIdeas">
   <div id="sharedView" hidden></div>
+  <section class="feat" id="featBox" aria-labelledby="featTitle">
+    <h2 id="featTitle">Tasty meals to start with</h2>
+    <small class="note fsub">Tap one and we plan it for you. New picks every day.</small>
+    <div class="featrow" id="featRow"></div>
+  </section>
   <div class="card">
     <div class="modeseg" role="group" aria-label="How do you want ideas">
       <button class="cattab" id="modeHave" aria-pressed="true">I have food</button>
@@ -286,6 +310,7 @@ details.saved .meta{margin-top:2px}
 
 <footer>
   <a href="/privacy.html">Privacy policy</a> &nbsp; <a href="mailto:therecipecart@outlook.com">therecipecart@outlook.com</a>
+  <p>Meal photos from <a href="https://unsplash.com/?utm_source=recipe_cart&utm_medium=referral" target="_blank" rel="noopener">Unsplash</a>. They show the style of a dish and may not match your exact meal.</p>
   <p>Recipe Cart is not affiliated with or endorsed by Kroger.</p>
 </footer>
 
@@ -1465,8 +1490,96 @@ async function getIdeas(more, scratch) {
   gen.busy = false;
   renderIdeas();
   estimateNew();
+  loadIdeaPhotos(gen);
 }
 $("goIdeas").onclick = () => getIdeas(false, emptyMode);
+
+// ---- Meal photos (Unsplash, through a Netlify function so the key stays on the server) ----
+// Photo links are remembered on this device so the same meal never asks twice.
+const PHOTO_KEY = "mealPhotos";
+let photoCache = {};
+try { const p = JSON.parse(store.get(PHOTO_KEY) || "{}"); if (p && typeof p === "object" && !Array.isArray(p)) photoCache = p; } catch { photoCache = {}; }
+const photoKey = (q) => String(q || "").toLowerCase().replace(/\s+/g, " ").trim().slice(0, 80);
+function savePhotos() {
+  const ks = Object.keys(photoCache);
+  if (ks.length > 120) ks.slice(0, ks.length - 120).forEach((k) => { delete photoCache[k]; });
+  store.set(PHOTO_KEY, JSON.stringify(photoCache));
+}
+const okPhoto = (p) => p && /^https:\/\/images\.unsplash\.com\//.test(p.url || "") && (!p.link || /^https:\/\/unsplash\.com\//.test(p.link));
+const photoReq = {};
+async function mealPhoto(q) {
+  const k = photoKey(q);
+  if (!k) return null;
+  if (k in photoCache) return okPhoto(photoCache[k]) ? photoCache[k] : null;
+  if (photoReq[k]) return photoReq[k];
+  photoReq[k] = (async () => {
+    try {
+      const r = await fetch("/.netlify/functions/meal-photo?q=" + encodeURIComponent(k));
+      if (!r.ok) return null; // failures and rate limits are not remembered, so it tries again next time
+      const d = await r.json();
+      const p = d && d.url ? { url: String(d.url), by: String(d.by || "").slice(0, 60), link: String(d.link || ""), dl: String(d.dl || "") } : null;
+      photoCache[k] = okPhoto(p) ? p : null; savePhotos();
+      return photoCache[k];
+    } catch { return null; } finally { delete photoReq[k]; }
+  })();
+  return photoReq[k];
+}
+const UNSPLASH_LINK = "https://unsplash.com/?utm_source=recipe_cart&utm_medium=referral";
+const creditHtml = (p) => p && p.by ? `<small class="pcredit">Photo by ${p.link ? `<a href="${esc(p.link)}" target="_blank" rel="noopener">${esc(p.by)}</a>` : esc(p.by)} on <a href="${UNSPLASH_LINK}" target="_blank" rel="noopener">Unsplash</a></small>` : "";
+// Tells Unsplash (through our function) that a photo was used, once per photo per device.
+function trackPhoto(p) {
+  if (!p || !p.dl || p.tracked) return;
+  p.tracked = true; savePhotos();
+  fetch("/.netlify/functions/meal-photo?dl=" + encodeURIComponent(p.dl)).catch(() => {});
+}
+async function loadIdeaPhotos(g) {
+  const todo = g.list.filter((m) => !m.photoTried);
+  if (!todo.length) return;
+  await Promise.all(todo.map(async (m) => { m.photoTried = true; m.photo = await mealPhoto(m.title); trackPhoto(m.photo); }));
+  if (ideas === g) renderIdeas();
+}
+
+// ---- Featured meals: 4 picks that rotate daily, each one starts an "I want a dish" plan ----
+const FEATURED_POOL = [
+  { dish: "Teriyaki chicken bowl", q: "teriyaki chicken rice bowl", mins: 25, emoji: "🍗" },
+  { dish: "Garlic shrimp pasta", q: "garlic shrimp pasta", mins: 20, emoji: "🍝" },
+  { dish: "Beef and broccoli stir fry", q: "beef and broccoli stir fry", mins: 30, emoji: "🥦" },
+  { dish: "Chicken fajita skillet", q: "chicken fajita skillet", mins: 25, emoji: "🌮" },
+  { dish: "Sausage and veggie sheet pan", q: "sausage vegetables sheet pan", mins: 35, emoji: "🥕" },
+  { dish: "Creamy Tuscan chicken", q: "creamy tuscan chicken", mins: 30, emoji: "🍗" },
+  { dish: "Black bean quesadillas", q: "black bean quesadilla", mins: 15, emoji: "🧀" },
+  { dish: "Egg fried rice", q: "egg fried rice", mins: 15, emoji: "🍚" },
+  { dish: "Turkey chili", q: "turkey chili", mins: 40, emoji: "🌶️" },
+  { dish: "Lemon herb salmon", q: "lemon herb salmon", mins: 20, emoji: "🐟" },
+  { dish: "Loaded baked potatoes", q: "loaded baked potato", mins: 45, emoji: "🥔" },
+  { dish: "Chicken burrito bowl", q: "chicken burrito bowl", mins: 25, emoji: "🥙" },
+];
+const featured = (() => {
+  const day = Math.floor(Date.now() / 86400000) % FEATURED_POOL.length;
+  return [0, 1, 2, 3].map((k) => FEATURED_POOL[(day + k) % FEATURED_POOL.length]);
+})();
+const phImg = (p, alt) => `<img src="${esc(p.url)}" alt="${esc(alt)}" loading="lazy">`;
+function renderFeatured() {
+  $("featRow").innerHTML = featured.map((f, i) =>
+    `<div class="fwrap"><button class="fcard" data-feat="${i}" aria-label="Plan ${esc(f.dish)}"><div class="fph" data-fph="${i}"><span aria-hidden="true">${esc(f.emoji)}</span></div><b>${esc(f.dish)}</b><small>${f.mins} min</small></button><span data-fcred="${i}"></span></div>`).join("");
+  featured.forEach(async (f, i) => {
+    const p = await mealPhoto(f.q);
+    const el = p && $("featRow").querySelector(`[data-fph="${i}"]`);
+    if (el) { f.photo = p; el.innerHTML = phImg(p, ""); $("featRow").querySelector(`[data-fcred="${i}"]`).innerHTML = creditHtml(p); }
+  });
+}
+function startFeatured(i) {
+  const f = featured[i];
+  if (!f || ideas?.busy) return;
+  trackPhoto(f.photo);
+  emptyMode = true; store.set("ideaMode", "empty");
+  $("dishIn").value = f.dish; store.set("ideaDish", f.dish);
+  ideasMsg("");
+  renderKitchen();
+  getIdeas(false, true);
+  $("ideasList").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+$("featRow").addEventListener("click", (ev) => { const b = ev.target.closest("[data-feat]"); if (b) startFeatured(Number(b.dataset.feat)); });
 
 function ideaCardHtml(i, m) {
   const need = m.needs.length;
@@ -1504,12 +1617,14 @@ function ideaCardHtml(i, m) {
   const metaChips = [`⏱ ${m.minutes} min`, m.protein ? `💪 ≈${m.protein}g protein` : "", m.calories ? `🔥 ≈${m.calories} cal` : "", priceChipText(m)].filter(Boolean);
   return `<div class="card idea">
     <div class="ihead">
-      <span class="ibadge" aria-hidden="true">${esc(m.emoji || "🍽️")}</span>
+      ${m.photo ? `<img class="iphoto" src="${esc(m.photo.url)}" alt="" loading="lazy" width="72" height="72">` : `<span class="ibadge" aria-hidden="true">${esc(m.emoji || "🍽️")}</span>`}
       <div class="ibody"><b>${esc(m.title)}</b><small class="note">${esc(m.summary)}</small></div>
       ${m.saved ? `<span class="mchip chip-ok">Saved</span>` : ""}
     </div>
     <div class="meta-row">${metaChips.map((t) => `<span class="mchip">${esc(t)}</span>`).join("")}</div>
+    ${creditHtml(m.photo)}
     ${tag ? `<small class="note" style="display:block;margin-top:10px">${esc(tag)}</small>` : ""}
+    ${m.open && m.photo ? `<img class="ibanner" src="${esc(m.photo.url)}" alt="${esc(m.title)}" loading="lazy">` : ""}
     ${body}
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px">
       <button class="btn ${m.open ? "ghost" : "primary"}" data-iact="recipe" data-i="${i}">${m.open ? "Hide recipe" : "Make it"}</button>
@@ -1606,6 +1721,7 @@ $("ideasList").addEventListener("click", (ev) => {
   else if (a === "share") openShare(i);
 });
 renderIdeas();
+renderFeatured();
 
 // ---- Share card ----
 // The card is drawn in this browser. A photo the person picks is used on this device only and is never uploaded.
