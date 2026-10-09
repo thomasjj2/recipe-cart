@@ -2,17 +2,23 @@
 // Actions:
 //   "list"                            -> { lists: [{ id, title, ingredients, steps?, createdAt }] }
 //   "save"   { title, ingredients, steps?, servings?, proteinPerServing? } -> { id }   (steps = the saved meal's short recipe, optional)
+//   "save"   { own: true, title, ingredients, notes?, emoji? } -> { id }   (a meal the person wrote themselves, shown under My Meals)
 //   "setNutrition" { id, servings, proteinPerServing } -> { updated: true }   (fills in nutrition for an older saved list)
 //   "delete" { id }                   -> { deleted: true }
 //   "deleteAccount"                   -> deletes all lists, the Kroger connection, and the sign-in account
 // We store ONLY the user's own list title, ingredient names, quantities, servings, estimated protein per serving, and (for saved meals) the recipe steps.
+// For My Meals we also store the person's own recipe notes and an icon.
 // No Kroger product, price, or image data is ever saved here (Kroger ToS Section 5e).
 const { getAdmin } = require("./_firebaseAdmin");
 
 const MAX_LISTS = 50;
+const MAX_OWN = 50; // My Meals are counted separately from saved meals
+const MAX_NOTES = 500;
 const MAX_ITEMS = 40;
 const MAX_STEPS = 10;
 const clean = (v, n) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
+const cleanNotes = (v) => String(v ?? "").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim().slice(0, MAX_NOTES);
+const cleanEmoji = (v) => { const e = clean(v, 8); return /\p{Extended_Pictographic}/u.test(e) ? e : ""; };
 const intIn = (v, min, max) => { const n = Math.round(Number(v)); return Number.isFinite(n) && n >= min && n <= max ? n : null; };
 
 exports.handler = async (event) => {
@@ -31,7 +37,7 @@ exports.handler = async (event) => {
     const col = userRef.collection("lists");
 
     if (b.action === "list") {
-      const snap = await col.orderBy("createdAt", "desc").limit(MAX_LISTS).get();
+      const snap = await col.orderBy("createdAt", "desc").limit(MAX_LISTS + MAX_OWN).get();
       return res(200, { lists: snap.docs.map((d) => ({ id: d.id, ...d.data() })) });
     }
 
@@ -47,13 +53,23 @@ exports.handler = async (event) => {
       const servings = intIn(b.servings, 1, 50);
       const proteinPerServing = intIn(b.proteinPerServing, 0, 500);
 
-      const count = (await col.count().get()).data().count;
-      if (count >= MAX_LISTS) {
+      const isOwn = b.own === true;
+      const total = (await col.count().get()).data().count;
+      const ownCount = (await col.where("own", "==", true).count().get()).data().count;
+      if (isOwn && ownCount >= MAX_OWN) {
+        return res(409, { error: `You have ${MAX_OWN} of your own meals. Delete one to add another.` });
+      }
+      if (!isOwn && total - ownCount >= MAX_LISTS) {
         return res(409, { error: `You have ${MAX_LISTS} saved lists. Delete one to save another.` });
       }
+      const notes = isOwn ? cleanNotes(b.notes) : "";
+      const emoji = isOwn ? cleanEmoji(b.emoji) : "";
       const ref = await col.add({
         title: clean(b.title, 100) || "Shopping list",
         ingredients,
+        ...(isOwn ? { own: true } : {}),
+        ...(notes ? { notes } : {}),
+        ...(emoji ? { emoji } : {}),
         ...(steps.length ? { steps } : {}),
         ...(servings ? { servings } : {}),
         ...(servings && proteinPerServing !== null ? { proteinPerServing } : {}),
