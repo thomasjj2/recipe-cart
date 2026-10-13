@@ -9,3 +9,14 @@
   to = "https://recipe-cart-a1164.firebaseapp.com/__/auth/:splat"
   status = 200
   force = true
+
+# Group events: shared links like /e/abc123 open the events page
+[[redirects]]
+  from = "/e/*"
+  to = "/events/index.html"
+  status = 200
+
+[[redirects]]
+  from = "/events"
+  to = "/events/index.html"
+  status = 200
