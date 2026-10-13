@@ -1,1 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recipe Cart Events</title>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#fbf6ee;--ink:#241c12;--mute:#7a6d5d;--line:#e8dfd0;--acc:#d9631e;--ok:#3f7a4b;--card:#fff}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.4 "Bricolage Grotesque",system-ui,sans-serif}
+main{max-width:560px;margin:0 auto;padding:20px 16px 60px}
+h1{font-size:26px;margin:6px 0 4px;font-weight:800}
+.sub{color:var(--mute);margin:0 0 16px;font-size:15px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px}
+label{display:block;font-size:13px;color:var(--mute);margin:10px 0 4px}
+input,textarea{width:100%;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink);font:inherit}
+textarea{min-height:90px;resize:vertical}
+.btn{width:100%;padding:14px;border:0;border-radius:12px;background:var(--acc);color:#fff;font:inherit;font-weight:600;margin-top:12px;cursor:pointer}
+.btn:disabled{opacity:.6}
+.btn.alt{background:var(--ok)}
+.row{display:flex;gap:10px;align-items:flex-start;padding:12px 0;border-bottom:1px solid var(--line)}
+.row:last-child{border-bottom:0}
+.em{font-size:26px}.t{flex:1;min-width:0}.n{font-weight:600}.q{font-size:13px;color:var(--mute)}
+.pill{padding:8px 12px;border-radius:999px;border:1px solid var(--acc);color:var(--acc);background:none;font:inherit;font-size:14px;cursor:pointer;white-space:nowrap}
+.pill.mine{background:var(--ok);border-color:var(--ok);color:#fff}
+.pill.taken{border-color:var(--line);color:var(--mute);cursor:default}
+.msg{padding:10px 12px;border-radius:10px;margin-bottom:12px;font-size:14px;background:#fdeadf}
+.msg.ok{background:#e6f1e8}
+.hide{display:none}
+.foot{font-size:12px;color:var(--mute);margin-top:18px}
+.foot a{color:var(--mute)}
+.share{display:flex;gap:8px}.share input{flex:1}.share .btn{width:auto;margin:0;padding:10px 14px}
+</style>
+</head>
+<body>
+<main>
+<div id="msg" class="msg hide"></div>
 
+<section id="create" class="hide">
+  <h1>Plan a group trip, split the food</h1>
+  <p class="sub">Describe the event. We suggest meals and snacks, and your group calls dibs.</p>
+  <div class="card">
+    <label for="title">Event name</label><input id="title" maxlength="80" placeholder="Lake Allatoona camping">
+    <label for="desc">What's the plan?</label>
+    <textarea id="desc" maxlength="400" placeholder="Camping 2 nights, car camping with a cooler, one camp stove, hot days"></textarea>
+    <label for="n">How many people?</label><input id="n" type="number" min="2" max="100" value="6" inputmode="numeric">
+    <button class="btn" id="go">Plan the menu (Google sign-in)</button>
+  </div>
+</section>
+
+<section id="ev" class="hide">
+  <h1 id="evT"></h1>
+  <p class="sub" id="evS"></p>
+  <div class="card share"><input id="link" readonly><button class="btn" id="copy">Copy link</button></div>
+  <div class="card"><label for="me">Your name</label><input id="me" maxlength="30" placeholder="So others see who's bringing it"></div>
+  <div class="card" id="list"></div>
+  <div class="card hide" id="exp">
+    <div class="n">Get my picks at Kroger</div>
+    <div class="q" id="expS"></div>
+    <label for="zip">ZIP code</label><input id="zip" inputmode="numeric" maxlength="5" placeholder="31088">
+    <div id="matched" class="q" style="margin-top:8px"></div>
+    <button class="btn" id="expBtn">Find Kroger items</button>
+  </div>
+</section>
+
+<p class="foot">Recipe Cart is not affiliated with or endorsed by Kroger. <a href="/">Back to Recipe Cart</a></p>
+</main>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+
+const app = initializeApp({
+  apiKey: "AIzaSyDRjr8mZpwsjBW1wTbGFJbiB5sS9acc4-s", authDomain: "tryrecipecart.com", projectId: "recipe-cart-a1164",
+  storageBucket: "recipe-cart-a1164.firebasestorage.app", messagingSenderId: "479408777820", appId: "1:479408777820:web:7ff84f540ee5cc604f9499"
+});
+const auth = getAuth(app);
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
+const banner = (t, ok) => { const m = $("msg"); m.textContent = t; m.className = "msg" + (ok ? " ok" : ""); };
+
+async function post(url, body) {
+  const r = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error || "Something went wrong.");
+  return d;
+}
+const authReady = new Promise((res) => { const u = onAuthStateChanged(auth, (x) => { u(); res(x); }); });
+async function ensureAnon() { await authReady; if (!auth.currentUser) await signInAnonymously(auth); return auth.currentUser; }
+async function ensureGoogle() {
+  await authReady;
+  if (!auth.currentUser || auth.currentUser.isAnonymous) await signInWithPopup(auth, new GoogleAuthProvider());
+  return auth.currentUser;
+}
+
+const m = location.pathname.match(/^\/e\/([a-z0-9]+)/);
+let ev = null, cart = null;
+
+if (!m) {
+  $("create").classList.remove("hide");
+  $("go").onclick = async () => {
+    $("go").disabled = true; $("msg").className = "msg hide";
+    try {
+      const u = await ensureGoogle();
+      const { id } = await post("/.netlify/functions/events", { action: "create", idToken: await u.getIdToken(), title: $("title").value, desc: $("desc").value, n: $("n").value });
+      location.href = "/e/" + id;
+    } catch (e) { banner(e.message); $("go").disabled = false; }
+  };
+} else {
+  $("ev").classList.remove("hide");
+  $("me").value = store.get("ev_name") || ""; $("zip").value = store.get("zip") || "";
+  $("link").value = location.href;
+  $("copy").onclick = () => { navigator.clipboard?.writeText(location.href); banner("Link copied.", true); };
+  $("me").oninput = () => { store.set("ev_name", $("me").value.trim()); };
+  load(); setInterval(() => { if (!document.hidden && !cart) load(); }, 8000);
+}
+
+async function load() {
+  try { ev = (await post("/.netlify/functions/events", { action: "get", id: m[1] })).event; render(); }
+  catch (e) { banner(e.message); }
+}
+
+function render() {
+  const uid = auth.currentUser?.uid;
+  $("evT").textContent = ev.title; $("evS").textContent = ev.n + " people. Tap what you'll bring.";
+  $("list").innerHTML = ev.items.map((i) => {
+    const mine = uid && i.by === uid;
+    const btn = !i.by ? `<button class="pill" data-a="claim" data-id="${i.id}">Dibs</button>`
+      : mine ? `<button class="pill mine" data-a="release" data-id="${i.id}">Yours (undo)</button>`
+      : `<span class="pill taken">${esc(i.byName || "Taken")}</span>`;
+    return `<div class="row"><div class="em">${esc(i.emoji)}</div><div class="t"><div class="n">${esc(i.title)}</div><div class="q">${esc(i.summary)}</div></div>${btn}</div>`;
+  }).join("");
+  const my = ev.items.filter((i) => uid && i.by === uid);
+  $("exp").classList.toggle("hide", !my.length);
+  $("expS").textContent = my.length + " item" + (my.length > 1 ? "s" : "") + " you're bringing";
+}
+
+$("list").onclick = async (e) => {
+  const b = e.target.closest("[data-a]"); if (!b) return;
+  const name = $("me").value.trim();
+  if (b.dataset.a === "claim" && !name) { $("me").focus(); return banner("Add your name first."); }
+  try {
+    const u = await ensureAnon();
+    await post("/.netlify/functions/events", { action: "claim", idToken: await u.getIdToken(), id: m[1], itemId: b.dataset.id, name, release: b.dataset.a === "release" });
+    cart = null; $("matched").textContent = ""; $("expBtn").textContent = "Find Kroger items";
+    $("msg").className = "msg hide"; await load();
+  } catch (err) { banner(err.message); load(); }
+};
+
+$("expBtn").onclick = async () => {
+  const uid = auth.currentUser?.uid;
+  const zip = $("zip").value.trim();
+  try {
+    if (!cart) {
+      if (!/^\d{5}$/.test(zip)) return banner("Enter a 5 digit ZIP code.");
+      store.set("zip", zip);
+      const names = [...new Set(ev.items.filter((i) => i.by === uid).flatMap((i) => i.needs))];
+      $("expBtn").disabled = true;
+      const r = await post("/.netlify/functions/match-products", { ingredients: names.map((name) => ({ name, qty: "" })), zip });
+      cart = (r.items || []).filter((x) => x.product?.upc);
+      $("matched").textContent = cart.length ? "Matched " + cart.length + " of " + names.length + " items at a nearby Kroger." : "";
+      $("expBtn").textContent = cart.length ? "Send to my Kroger cart" : "Find Kroger items";
+      if (!cart.length) { cart = null; banner("No Kroger matches for that ZIP."); }
+      $("expBtn").disabled = false; return;
+    }
+    const u = await ensureGoogle();
+    const idToken = await u.getIdToken();
+    try {
+      const r = await post("/.netlify/functions/cart-add", { idToken, items: cart.map((x) => ({ upc: x.product.upc, quantity: 1 })) });
+      banner("Added " + r.added + " items to your Kroger cart.", true);
+    } catch (e) {
+      if (e.message === "not_connected") { location.href = "/.netlify/functions/kroger-auth-start?idToken=" + encodeURIComponent(idToken); return; }
+      throw e;
+    }
+  } catch (e) { banner(e.message); $("expBtn").disabled = false; }
+};
+</script>
+</body>
+</html>
